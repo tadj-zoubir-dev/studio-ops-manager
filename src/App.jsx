@@ -94,6 +94,7 @@ const DEFAULT_SETTINGS = {
   phone: "",
   taxId: "",
   paymentMethod: "",
+  logoDataUrl: "",
   invoiceNote: "Thank you for the opportunity — payment is due by the date above.",
 };
 
@@ -690,7 +691,28 @@ function ExpenseManager({ project, data, mutate, onClose }) {
 
 function StudioSettingsModal({ settings, onSave, onClose }) {
   const [form, setForm] = useState(settings);
+  const [logoError, setLogoError] = useState("");
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  const onLogoPick = (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setLogoError("");
+    if (!file.type.startsWith("image/")) {
+      setLogoError("Please choose an image file (PNG, JPG, SVG…).");
+      return;
+    }
+    if (file.size > 800 * 1024) {
+      setLogoError("Keep the logo under 800 KB — export a smaller PNG/SVG.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => setForm((f) => ({ ...f, logoDataUrl: reader.result }));
+    reader.onerror = () => setLogoError("Couldn't read that file — try again.");
+    reader.readAsDataURL(file);
+  };
+
   return (
     <Modal title="Studio settings" onClose={onClose}>
       <form
@@ -701,6 +723,36 @@ function StudioSettingsModal({ settings, onSave, onClose }) {
         }}
       >
         <p className="field-hint">This appears on the letterhead of every invoice you generate.</p>
+
+        <Field label="Logo">
+          <div className="logo-upload-row">
+            <div className="logo-upload-preview">
+              {form.logoDataUrl ? (
+                <img src={form.logoDataUrl} alt="Studio logo" />
+              ) : (
+                <span className="logo-upload-placeholder">No logo</span>
+              )}
+            </div>
+            <div className="logo-upload-actions">
+              <label className="btn btn-ghost btn-sm logo-upload-btn">
+                <Upload size={13} /> {form.logoDataUrl ? "Replace logo" : "Upload logo"}
+                <input type="file" accept="image/*" onChange={onLogoPick} hidden />
+              </label>
+              {form.logoDataUrl && (
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => setForm((f) => ({ ...f, logoDataUrl: "" }))}
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+          </div>
+          {logoError && <p className="field-hint field-hint-error">{logoError}</p>}
+          {!logoError && <p className="field-hint">PNG, JPG or SVG, under 800 KB. Shown at the top of every invoice — falls back to the studio name if left empty.</p>}
+        </Field>
+
         <Field label="Studio name">
           <input value={form.studioName} onChange={set("studioName")} placeholder="Studio Ops" required />
         </Field>
@@ -2029,7 +2081,11 @@ function InvoicePrintable({ invoice, client, project, settings }) {
     <div className="invoice-print">
       <div className="invoice-print-head">
         <div className="invoice-print-brand">
-          <h2>{settings.studioName}</h2>
+          {settings.logoDataUrl ? (
+            <img className="invoice-print-logo" src={settings.logoDataUrl} alt={settings.studioName} />
+          ) : (
+            <h2>{settings.studioName}</h2>
+          )}
           {settings.tagline && <p className="invoice-print-tagline">{settings.tagline}</p>}
         </div>
         <div className="invoice-print-divider" />
@@ -2979,6 +3035,7 @@ const CSS = `
 .invoice-print-head { display: flex; align-items: flex-start; gap: 22px; margin-bottom: 30px; }
 .invoice-print-brand { flex: 1; }
 .invoice-print-brand h2 { font-size: 24px; font-weight: 800; letter-spacing: -0.01em; margin: 0; text-transform: uppercase; }
+.invoice-print-logo { max-height: 64px; max-width: 240px; width: auto; height: auto; object-fit: contain; display: block; }
 .invoice-print-tagline { margin: 6px 0 0; font-size: 12px; font-weight: 600; color: var(--inv-muted); letter-spacing: 0.02em; }
 .invoice-print-divider { width: 1px; align-self: stretch; background: var(--inv-navy); opacity: 0.15; }
 .invoice-print-meta { flex: 1; text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
@@ -3095,6 +3152,17 @@ const CSS = `
 .portal-code-row { display: flex; gap: 8px; align-items: center; }
 .portal-code-row input { flex: 1; }
 .field-hint { font-size: 11px; color: var(--muted); }
+.field-hint-error { color: var(--red); }
+
+.logo-upload-row { display: flex; align-items: center; gap: 12px; }
+.logo-upload-preview {
+  width: 72px; height: 72px; border-radius: 8px; border: 1.5px dashed var(--rule); background: var(--paper-raised);
+  display: flex; align-items: center; justify-content: center; overflow: hidden; flex-shrink: 0;
+}
+.logo-upload-preview img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.logo-upload-placeholder { font-size: 10px; color: var(--muted); text-align: center; }
+.logo-upload-actions { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.logo-upload-btn { cursor: pointer; }
 .portal-code-chip {
   display: inline-flex; align-items: center; gap: 4px; font-family: 'IBM Plex Mono', monospace;
   font-size: 10.5px; color: var(--muted); letter-spacing: 0.03em;
