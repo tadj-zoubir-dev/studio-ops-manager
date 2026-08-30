@@ -42,6 +42,13 @@ import {
   BarChart3,
   Command,
   ArrowRight,
+  Calendar,
+  User,
+  CreditCard,
+  Facebook,
+  Instagram,
+  Phone,
+  MessageCircle,
 } from "lucide-react";
 import { supabase, FILES_BUCKET } from "./supabaseClient.js";
 
@@ -86,6 +93,7 @@ const DEFAULT_SETTINGS = {
   email: "",
   phone: "",
   taxId: "",
+  paymentMethod: "",
   invoiceNote: "Thank you for the opportunity — payment is due by the date above.",
 };
 
@@ -155,7 +163,8 @@ function seedData() {
       email: "hello@studioops.dz",
       phone: "+213 21 44 55 66",
       taxId: "",
-      invoiceNote: "Thank you for the opportunity — payment is due by the date above.",
+      paymentMethod: "Espèces - Virement - CCP",
+      invoiceNote: "Nous vous remercions pour votre confiance et restons à votre disposition.",
     },
   };
 }
@@ -711,6 +720,9 @@ function StudioSettingsModal({ settings, onSave, onClose }) {
         </div>
         <Field label="Tax / registration ID (optional)">
           <input value={form.taxId} onChange={set("taxId")} placeholder="NIF / RC number" />
+        </Field>
+        <Field label="Payment method (shown on invoice)">
+          <input value={form.paymentMethod || ""} onChange={set("paymentMethod")} placeholder="Espèces - CCP - BaridiMob" />
         </Field>
         <Field label="Default invoice note">
           <textarea rows={2} value={form.invoiceNote} onChange={set("invoiceNote")} />
@@ -1999,40 +2011,53 @@ function InvoiceForm({ initial, clients, projects, tasks, invoices, nextNumber, 
 }
 
 /* ---------------------- printable invoice ---------------------- */
+const INVOICE_STATUS_FR = {
+  draft: "Brouillon",
+  sent: "Envoyée",
+  paid: "Payée",
+  overdue: "En retard",
+};
+
 function InvoicePrintable({ invoice, client, project, settings }) {
   const total = invoice.items.reduce((s, it) => s + it.qty * it.rate, 0);
+  const invoiceYear = (invoice.issueDate || "").slice(0, 4) || String(new Date().getFullYear());
+  const displayNumber = /^\d+$/.test(String(invoice.number))
+    ? `INV-${invoiceYear}-${invoice.number}`
+    : invoice.number;
+
   return (
     <div className="invoice-print">
       <div className="invoice-print-head">
-        <div>
+        <div className="invoice-print-brand">
           <h2>{settings.studioName}</h2>
-          {settings.tagline && <p>{settings.tagline}</p>}
-          {settings.address && <p>{settings.address}</p>}
-          {(settings.email || settings.phone) && (
-            <p>{[settings.email, settings.phone].filter(Boolean).join(" · ")}</p>
-          )}
-          {settings.taxId && <p>Tax ID: {settings.taxId}</p>}
+          {settings.tagline && <p className="invoice-print-tagline">{settings.tagline}</p>}
         </div>
+        <div className="invoice-print-divider" />
         <div className="invoice-print-meta">
-          <h3>INVOICE</h3>
-          <p className="mono-cell">#{invoice.number}</p>
-          <Stamp label={INVOICE_STATUS[invoice.status]?.label || invoice.status} color={INVOICE_STATUS[invoice.status]?.color} />
+          <h3>FACTURE</h3>
+          <p className="mono-cell">N° {displayNumber}</p>
+          <div className="invoice-print-meta-row">
+            <Calendar size={13} />
+            <span>Date de Facturation<br /><strong>{fmtDate(invoice.issueDate)}</strong></span>
+          </div>
+          <div className="invoice-print-meta-row">
+            <Calendar size={13} />
+            <span>Date d'échéance<br /><strong>{fmtDate(invoice.dueDate)}</strong></span>
+          </div>
+          <Stamp label={INVOICE_STATUS_FR[invoice.status] || invoice.status} color={INVOICE_STATUS[invoice.status]?.color} />
         </div>
       </div>
 
-      <div className="invoice-print-parties">
+      <div className="invoice-print-billto">
+        <span className="invoice-print-billto-icon"><User size={16} /></span>
         <div>
-          <span className="field-label">Billed to</span>
-          <strong>{client?.company || "—"}</strong>
+          <strong>FACTURE À</strong>
+          <p>Client : <strong>{client?.company || "—"}</strong></p>
           {client?.name && <p>{client.name}</p>}
-          {client?.email && <p>{client.email}</p>}
-          {client?.phone && <p>{client.phone}</p>}
-        </div>
-        <div>
-          <span className="field-label">Details</span>
-          <p>Issued: {fmtDate(invoice.issueDate)}</p>
-          <p>Due: {fmtDate(invoice.dueDate)}</p>
-          {project && <p>Project: {project.name}</p>}
+          {(client?.email || client?.phone) && (
+            <p>{[client.email, client.phone].filter(Boolean).join(" · ")}</p>
+          )}
+          {project && <p>Projet : {project.name}</p>}
         </div>
       </div>
 
@@ -2040,16 +2065,16 @@ function InvoicePrintable({ invoice, client, project, settings }) {
         <thead>
           <tr>
             <th>Description</th>
-            <th>Qty</th>
-            <th>Rate</th>
-            <th>Amount</th>
+            <th>Quantité</th>
+            <th>Prix unitaire</th>
+            <th>Montant</th>
           </tr>
         </thead>
         <tbody>
           {invoice.items.map((it, i) => (
             <tr key={i}>
               <td>{it.desc}</td>
-              <td>{it.qty}</td>
+              <td>{String(it.qty).padStart(2, "0")}</td>
               <td>{fmtMoney(it.rate)}</td>
               <td>{fmtMoney(it.qty * it.rate)}</td>
             </tr>
@@ -2057,12 +2082,52 @@ function InvoicePrintable({ invoice, client, project, settings }) {
         </tbody>
       </table>
 
-      <div className="invoice-print-total">
-        <span>Total due</span>
-        <strong>{fmtMoney(total)}</strong>
+      <div className="invoice-print-totals">
+        <div className="invoice-print-totals-row">
+          <span>SOUS-TOTAL</span>
+          <span>{fmtMoney(total)}</span>
+        </div>
+        <div className="invoice-print-totals-row">
+          <span>TVA (0%)</span>
+          <span>00 %</span>
+        </div>
+        <div className="invoice-print-totals-row invoice-print-totals-final">
+          <span>TOTAL À PAYER</span>
+          <span>{fmtMoney(total)}</span>
+        </div>
       </div>
 
-      {settings.invoiceNote && <p className="invoice-print-note">{settings.invoiceNote}</p>}
+      {settings.paymentMethod && (
+        <div className="invoice-print-payment">
+          <span className="invoice-print-payment-icon"><CreditCard size={16} /></span>
+          <div>
+            <strong>Méthode de paiement</strong>
+            <p>{settings.paymentMethod}</p>
+          </div>
+        </div>
+      )}
+
+      <div className="invoice-print-thanks">
+        <h4>Merci d'avoir choisi {settings.studioName}</h4>
+        {settings.invoiceNote && <p>{settings.invoiceNote}</p>}
+      </div>
+
+      {(settings.phone || settings.email || settings.address || settings.taxId) && (
+        <div className="invoice-print-footer">
+          {settings.phone && (
+            <span><Phone size={13} /><MessageCircle size={13} />{settings.phone}</span>
+          )}
+          {settings.email && (
+            <span><Mail size={13} />{settings.email}</span>
+          )}
+          <span><Facebook size={13} /><Instagram size={13} />{settings.studioName}</span>
+        </div>
+      )}
+      {(settings.address || settings.taxId) && (
+        <p className="invoice-print-fineprint">
+          {[settings.address, settings.taxId && `NIF/RC : ${settings.taxId}`].filter(Boolean).join(" · ")}
+        </p>
+      )}
     </div>
   );
 }
@@ -2899,28 +2964,78 @@ const CSS = `
 /* printable invoice */
 .invoice-preview-actions { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
 .invoice-print-frame { background: #fff; border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; }
-.invoice-print { padding: 32px 34px; background: #fff; color: var(--ink); font-family: 'Inter', sans-serif; }
-.invoice-print-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; padding-bottom: 18px; border-bottom: 2px solid var(--ink); margin-bottom: 20px; }
-.invoice-print-head h2 { font-size: 19px; }
-.invoice-print-head p { margin: 2px 0 0; font-size: 11.5px; color: var(--muted); }
-.invoice-print-meta { text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
-.invoice-print-meta h3 { font-size: 15px; letter-spacing: 0.08em; }
-.invoice-print-meta p { margin: 0; font-size: 12px; color: var(--muted); }
-.invoice-print-parties { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 22px; }
-.invoice-print-parties .field-label { display: block; margin-bottom: 4px; }
-.invoice-print-parties strong { font-size: 14px; }
-.invoice-print-parties p { margin: 2px 0 0; font-size: 12.5px; color: var(--ink); }
-.invoice-print-table { width: 100%; border-collapse: collapse; margin-bottom: 4px; }
+
+.invoice-print {
+  --inv-navy: #0B1130;
+  --inv-blue: #2AA1F2;
+  --inv-blue-soft: #E9F5FE;
+  --inv-muted: #6B7280;
+  padding: 36px 38px 30px;
+  background: #F4F7FB;
+  color: var(--inv-navy);
+  font-family: 'Inter', sans-serif;
+}
+
+.invoice-print-head { display: flex; align-items: flex-start; gap: 22px; margin-bottom: 30px; }
+.invoice-print-brand { flex: 1; }
+.invoice-print-brand h2 { font-size: 24px; font-weight: 800; letter-spacing: -0.01em; margin: 0; text-transform: uppercase; }
+.invoice-print-tagline { margin: 6px 0 0; font-size: 12px; font-weight: 600; color: var(--inv-muted); letter-spacing: 0.02em; }
+.invoice-print-divider { width: 1px; align-self: stretch; background: var(--inv-navy); opacity: 0.15; }
+.invoice-print-meta { flex: 1; text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.invoice-print-meta h3 { font-size: 26px; font-weight: 800; letter-spacing: 0.02em; margin: 0; }
+.invoice-print-meta > p.mono-cell { margin: 0 0 4px; font-size: 12.5px; color: var(--inv-blue); font-weight: 700; }
+.invoice-print-meta-row {
+  display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--inv-muted);
+  line-height: 1.5;
+}
+.invoice-print-meta-row svg { flex-shrink: 0; color: var(--inv-navy); }
+.invoice-print-meta-row strong { color: var(--inv-navy); font-size: 12px; }
+.invoice-print-meta .stamp { margin-top: 4px; }
+
+.invoice-print-billto { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 20px; }
+.invoice-print-billto-icon {
+  width: 30px; height: 30px; border-radius: 50%; background: var(--inv-navy); color: #fff;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.invoice-print-billto strong { font-size: 13px; letter-spacing: 0.03em; display: block; }
+.invoice-print-billto p { margin: 3px 0 0; font-size: 13px; color: var(--inv-navy); }
+
+.invoice-print-table { width: 100%; border-collapse: collapse; margin-bottom: 0; border-radius: 10px 10px 0 0; overflow: hidden; }
 .invoice-print-table th {
-  text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted);
-  padding: 8px 6px; border-bottom: 1.5px solid var(--ink);
+  text-align: left; font-size: 12px; font-weight: 700; color: #fff; background: var(--inv-blue);
+  padding: 12px 14px;
 }
 .invoice-print-table th:nth-child(2), .invoice-print-table th:nth-child(3), .invoice-print-table th:nth-child(4),
 .invoice-print-table td:nth-child(2), .invoice-print-table td:nth-child(3), .invoice-print-table td:nth-child(4) { text-align: right; }
-.invoice-print-table td { padding: 9px 6px; font-size: 13px; border-bottom: 1px solid var(--paper-dim); }
-.invoice-print-total { display: flex; justify-content: flex-end; align-items: baseline; gap: 10px; padding: 14px 6px; border-top: 2px solid var(--ink); font-family: 'Fraunces', serif; }
-.invoice-print-total strong { font-size: 20px; }
-.invoice-print-note { margin-top: 18px; padding-top: 14px; border-top: 1px dashed var(--rule); font-size: 12px; color: var(--muted); line-height: 1.6; }
+.invoice-print-table td { padding: 14px; font-size: 13px; background: var(--inv-navy); color: #fff; border-bottom: 1px solid rgba(255,255,255,0.12); }
+.invoice-print-table tbody tr:last-child td { border-bottom: none; }
+
+.invoice-print-totals { margin-left: auto; width: 62%; min-width: 260px; border-radius: 0 0 10px 10px; overflow: hidden; margin-bottom: 20px; }
+.invoice-print-totals-row {
+  display: flex; justify-content: space-between; align-items: center; padding: 10px 14px;
+  font-size: 13px; font-weight: 700; background: var(--inv-blue); color: #fff;
+  border-bottom: 1px solid rgba(255,255,255,0.25);
+}
+.invoice-print-totals-final { background: var(--inv-navy); font-size: 14px; border-bottom: none; }
+
+.invoice-print-payment { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 22px; }
+.invoice-print-payment-icon {
+  width: 30px; height: 30px; border-radius: 50%; background: var(--inv-navy); color: #fff;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.invoice-print-payment strong { font-size: 13px; display: block; }
+.invoice-print-payment p { margin: 3px 0 0; font-size: 12.5px; color: var(--inv-blue); font-weight: 600; }
+
+.invoice-print-thanks { margin: 26px 0 18px; }
+.invoice-print-thanks h4 { font-size: 19px; font-weight: 800; margin: 0; }
+.invoice-print-thanks p { margin: 6px 0 0; font-size: 12.5px; font-weight: 600; color: var(--inv-blue); }
+
+.invoice-print-footer {
+  display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px;
+  padding-top: 14px; border-top: 1px solid rgba(11,17,48,0.15); font-size: 11.5px; font-weight: 700;
+}
+.invoice-print-footer span { display: flex; align-items: center; gap: 5px; }
+.invoice-print-fineprint { margin: 10px 0 0; font-size: 10.5px; color: var(--inv-muted); text-align: center; }
 
 @media print {
   .no-print { display: none !important; }
