@@ -36,6 +36,12 @@ import {
   Building,
   Mail,
   Lock,
+  Wallet,
+  Clock3,
+  TrendingUp,
+  BarChart3,
+  Command,
+  ArrowRight,
 } from "lucide-react";
 import { supabase, FILES_BUCKET } from "./supabaseClient.js";
 
@@ -88,6 +94,8 @@ const emptyData = () => ({
   projects: [],
   tasks: [],
   invoices: [],
+  expenses: [],
+  timeEntries: [],
   jobCounter: 1001,
   settings: { ...DEFAULT_SETTINGS },
 });
@@ -122,6 +130,22 @@ function seedData() {
       { id: uid("inv"), number: "1001", clientId: c1, projectId: p1, status: "sent", issueDate: "2026-07-15", dueDate: "2026-08-14", items: [{ desc: "Brand strategy & discovery", qty: 1, rate: 120000 }, { desc: "Identity design — phase 1", qty: 1, rate: 160000 }] },
       { id: uid("inv"), number: "1002", clientId: c2, projectId: p2, status: "paid", issueDate: "2026-06-20", dueDate: "2026-07-20", items: [{ desc: "Site design — 12 pages", qty: 1, rate: 180000 }, { desc: "CMS integration", qty: 1, rate: 60000 }] },
       { id: uid("inv"), number: "1003", clientId: c3, projectId: p3, status: "draft", issueDate: todayISO(), dueDate: "2026-09-05", items: [{ desc: "Campaign concept & direction", qty: 1, rate: 45000 }] },
+      { id: uid("inv"), number: "1004", clientId: c1, projectId: p1, status: "paid", issueDate: "2026-04-10", dueDate: "2026-05-10", items: [{ desc: "Discovery workshop", qty: 1, rate: 60000 }] },
+      { id: uid("inv"), number: "1005", clientId: c2, projectId: p2, status: "paid", issueDate: "2026-05-18", dueDate: "2026-06-18", items: [{ desc: "Homepage design", qty: 1, rate: 95000 }] },
+      { id: uid("inv"), number: "1006", clientId: c3, projectId: p3, status: "paid", issueDate: "2026-03-22", dueDate: "2026-04-22", items: [{ desc: "Social templates — batch 1", qty: 1, rate: 40000 }] },
+    ],
+    expenses: [
+      { id: uid("exp"), projectId: p1, description: "Stock photography license", amount: 8000, date: "2026-07-05", category: "Assets" },
+      { id: uid("exp"), projectId: p1, description: "Print proof run", amount: 12500, date: "2026-07-20", category: "Production" },
+      { id: uid("exp"), projectId: p2, description: "Font license (webfont)", amount: 4500, date: "2026-06-02", category: "Assets" },
+      { id: uid("exp"), projectId: p3, description: "Freelance illustrator — 2 pieces", amount: 25000, date: "2026-06-15", category: "Contractor" },
+    ],
+    timeEntries: [
+      { id: uid("time"), projectId: p1, hours: 4, date: todayISO(), note: "Wordmark exploration" },
+      { id: uid("time"), projectId: p1, hours: 2.5, date: todayISO(), note: "Client call + notes" },
+      { id: uid("time"), projectId: p2, hours: 5, date: addDays(todayISO(), -1), note: "Homepage build" },
+      { id: uid("time"), projectId: p3, hours: 3, date: addDays(todayISO(), -2), note: "Concept sketches" },
+      { id: uid("time"), projectId: p2, hours: 1.5, date: addDays(todayISO(), -3), note: "Review pass" },
     ],
     jobCounter: 1004,
     settings: {
@@ -171,7 +195,12 @@ function useStudioData(ready) {
         if (cancelled) return;
         if (error) throw error;
         if (row?.data) {
-          setData({ ...row.data, settings: { ...DEFAULT_SETTINGS, ...(row.data.settings || {}) } });
+          setData({
+            ...row.data,
+            expenses: row.data.expenses || [],
+            timeEntries: row.data.timeEntries || [],
+            settings: { ...DEFAULT_SETTINGS, ...(row.data.settings || {}) },
+          });
         } else {
           const seed = seedData();
           setData(seed);
@@ -229,6 +258,37 @@ const addDays = (iso, days) => {
   return d.toISOString().slice(0, 10);
 };
 
+// Monday-start week range containing `iso` (defaults to today), offset by
+// `weekOffset` whole weeks (negative = past weeks).
+const weekRange = (weekOffset = 0, iso) => {
+  const base = new Date((iso || todayISO()) + "T00:00:00");
+  const day = base.getDay(); // 0 = Sunday
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  base.setDate(base.getDate() + mondayOffset + weekOffset * 7);
+  const start = base.toISOString().slice(0, 10);
+  const end = addDays(start, 6);
+  return { start, end };
+};
+
+const monthKey = (iso) => (iso || "").slice(0, 7); // "2026-07"
+const monthLabel = (key) => {
+  const d = new Date(`${key}-01T00:00:00`);
+  return d.toLocaleDateString("en-GB", { month: "short", year: "2-digit" });
+};
+
+// Last `n` month keys ending with the current month, oldest first.
+const lastMonths = (n) => {
+  const out = [];
+  const d = new Date();
+  d.setDate(1);
+  for (let i = n - 1; i >= 0; i--) {
+    const m = new Date(d);
+    m.setMonth(m.getMonth() - i);
+    out.push(m.toISOString().slice(0, 7));
+  }
+  return out;
+};
+
 /* ---------------------- status config ---------------------- */
 const PROJECT_STATUS = {
   planning: { label: "Planning", color: "var(--amber)" },
@@ -272,6 +332,28 @@ function ToastHost({ toasts, onDismiss }) {
           <span>{t.message}</span>
         </div>
       ))}
+    </div>
+  );
+}
+
+/* ---------------------- mini bar chart (no chart library) ---------------------- */
+function MiniBarChart({ data, valueFormat, color = "var(--ink)", height = 140 }) {
+  const max = Math.max(1, ...data.map((d) => d.value));
+  const barW = 100 / data.length;
+  return (
+    <div className="mini-chart" style={{ height }}>
+      <div className="mini-chart-bars">
+        {data.map((d, i) => {
+          const h = Math.max(2, (d.value / max) * 100);
+          return (
+            <div className="mini-chart-col" key={i} style={{ width: `${barW}%` }}>
+              <span className="mini-chart-value">{d.value > 0 ? (valueFormat ? valueFormat(d.value) : d.value) : ""}</span>
+              <div className="mini-chart-bar" style={{ height: `${h}%`, background: color }} />
+              <span className="mini-chart-label">{d.label}</span>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -499,6 +581,104 @@ function FileManager({ projectId, onCountChange, readOnly, portalCode }) {
 }
 
 /* ---------------------- studio settings ---------------------- */
+/* ---------------------- expense tracking ----------------------
+   Expenses live inside the same erp_state JSON document as everything
+   else (no new table needed) — kept per-project so profit can be
+   computed as invoiced revenue minus what it actually cost to deliver. */
+function ExpenseManager({ project, data, mutate, onClose }) {
+  const toast = useToast();
+  const [form, setForm] = useState({ description: "", amount: "", date: todayISO(), category: "" });
+  const [confirmId, setConfirmId] = useState(null);
+
+  const expenses = data.expenses.filter((e) => e.projectId === project.id);
+  const totalExpenses = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
+  const invoicedTotal = data.invoices
+    .filter((i) => i.projectId === project.id)
+    .reduce((s, i) => s + i.items.reduce((s2, it) => s2 + it.qty * it.rate, 0), 0);
+  const profit = invoicedTotal - totalExpenses;
+
+  const addExpense = (e) => {
+    e.preventDefault();
+    if (!form.description.trim() || !form.amount) return;
+    mutate({
+      ...data,
+      expenses: [
+        ...data.expenses,
+        { id: uid("exp"), projectId: project.id, description: form.description, amount: Number(form.amount) || 0, date: form.date, category: form.category },
+      ],
+    });
+    toast(`${form.description} added`);
+    setForm({ description: "", amount: "", date: todayISO(), category: "" });
+  };
+
+  const deleteExpense = (id) => {
+    const exp = data.expenses.find((e) => e.id === id);
+    mutate({ ...data, expenses: data.expenses.filter((e) => e.id !== id) });
+    setConfirmId(null);
+    toast(`${exp?.description || "Expense"} removed`);
+  };
+
+  return (
+    <Modal title={`Expenses — ${project.name}`} onClose={onClose} wide>
+      <div className="expense-summary">
+        <div>
+          <span className="field-label">Invoiced</span>
+          <strong>{fmtMoney(invoicedTotal)}</strong>
+        </div>
+        <div>
+          <span className="field-label">Expenses</span>
+          <strong className="amount-warn">{fmtMoney(totalExpenses)}</strong>
+        </div>
+        <div>
+          <span className="field-label">Profit</span>
+          <strong className={profit >= 0 ? "amount-good" : "amount-warn"}>{fmtMoney(profit)}</strong>
+        </div>
+      </div>
+
+      <form className="line-item-row expense-add-row" onSubmit={addExpense}>
+        <input
+          placeholder="Description"
+          value={form.description}
+          onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+        />
+        <input
+          type="number"
+          min="0"
+          placeholder="Amount"
+          value={form.amount}
+          onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))}
+        />
+        <input type="date" value={form.date} onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))} />
+        <button type="submit" className="icon-btn"><Plus size={14} /></button>
+      </form>
+
+      {expenses.length === 0 ? (
+        <p className="muted-note">No expenses logged for this project yet.</p>
+      ) : (
+        <ul className="file-list">
+          {expenses.map((e) => (
+            <li key={e.id}>
+              <Wallet size={15} />
+              <div className="file-list-info">
+                <strong>{e.description}</strong>
+                <span>{fmtMoney(e.amount)} · {fmtDate(e.date)}{e.category ? ` · ${e.category}` : ""}</span>
+              </div>
+              <button className="icon-btn icon-btn-danger" onClick={() => setConfirmId(e.id)} title="Delete">
+                <Trash2 size={14} />
+              </button>
+              {confirmId === e.id && (
+                <div className="confirm-floating">
+                  <ConfirmDelete label={e.description} onConfirm={() => deleteExpense(e.id)} onCancel={() => setConfirmId(null)} />
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </Modal>
+  );
+}
+
 function StudioSettingsModal({ settings, onSave, onClose }) {
   const [form, setForm] = useState(settings);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
@@ -594,12 +774,106 @@ function AuthScreen({ onOpenPortal }) {
   );
 }
 
+/* ---------------------- global search ---------------------- */
+function GlobalSearchModal({ data, onClose, onNavigate }) {
+  const [query, setQuery] = useState("");
+  const q = query.trim().toLowerCase();
+
+  const clientName = (id) => data.clients.find((c) => c.id === id)?.company || "";
+
+  const results = useMemo(() => {
+    if (q.length < 1) return { clients: [], projects: [], tasks: [], invoices: [] };
+    return {
+      clients: data.clients.filter((c) => `${c.name} ${c.company} ${c.email}`.toLowerCase().includes(q)).slice(0, 6),
+      projects: data.projects.filter((p) => `${p.name} ${clientName(p.clientId)}`.toLowerCase().includes(q)).slice(0, 6),
+      tasks: data.tasks.filter((t) => t.title.toLowerCase().includes(q)).slice(0, 6),
+      invoices: data.invoices.filter((i) => `#${i.number} ${clientName(i.clientId)}`.toLowerCase().includes(q)).slice(0, 6),
+    };
+  }, [q, data]);
+
+  const totalResults = results.clients.length + results.projects.length + results.tasks.length + results.invoices.length;
+
+  const go = (view) => {
+    onNavigate(view);
+    onClose();
+  };
+
+  return (
+    <div className="modal-veil" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal-sheet search-sheet">
+        <div className="search-input-row">
+          <Search size={16} />
+          <input
+            autoFocus
+            placeholder="Search clients, projects, tasks, invoices…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => e.key === "Escape" && onClose()}
+          />
+          <button className="icon-btn" onClick={onClose}><X size={16} /></button>
+        </div>
+        <div className="search-results">
+          {q.length < 1 ? (
+            <p className="muted-note search-hint">Start typing to search across everything…</p>
+          ) : totalResults === 0 ? (
+            <p className="muted-note search-hint">No matches for "{query}".</p>
+          ) : (
+            <>
+              {results.clients.length > 0 && (
+                <div className="search-group">
+                  <span className="search-group-label"><Users size={12} /> Clients</span>
+                  {results.clients.map((c) => (
+                    <button key={c.id} className="search-result-row" onClick={() => go("clients")}>
+                      <span>{c.company}</span><span className="muted-note">{c.name}</span><ArrowRight size={13} />
+                    </button>
+                  ))}
+                </div>
+              )}
+              {results.projects.length > 0 && (
+                <div className="search-group">
+                  <span className="search-group-label"><Briefcase size={12} /> Projects</span>
+                  {results.projects.map((p) => (
+                    <button key={p.id} className="search-result-row" onClick={() => go("projects")}>
+                      <span>{p.name}</span><span className="muted-note">{clientName(p.clientId)}</span><ArrowRight size={13} />
+                    </button>
+                  ))}
+                </div>
+              )}
+              {results.tasks.length > 0 && (
+                <div className="search-group">
+                  <span className="search-group-label"><CheckSquare size={12} /> Tasks</span>
+                  {results.tasks.map((t) => (
+                    <button key={t.id} className="search-result-row" onClick={() => go("tasks")}>
+                      <span>{t.title}</span><span className="muted-note">{data.projects.find((p) => p.id === t.projectId)?.name || ""}</span><ArrowRight size={13} />
+                    </button>
+                  ))}
+                </div>
+              )}
+              {results.invoices.length > 0 && (
+                <div className="search-group">
+                  <span className="search-group-label"><Receipt size={12} /> Invoices</span>
+                  {results.invoices.map((i) => (
+                    <button key={i.id} className="search-result-row" onClick={() => go("invoices")}>
+                      <span>#{i.number}</span><span className="muted-note">{clientName(i.clientId)}</span><ArrowRight size={13} />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ---------------------- sidebar ---------------------- */
 const NAV_ITEMS = [
   { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { key: "clients", label: "Clients", icon: Users },
   { key: "projects", label: "Projects", icon: Briefcase },
   { key: "tasks", label: "Tasks", icon: CheckSquare },
+  { key: "time", label: "Time", icon: Clock3 },
   { key: "invoices", label: "Invoices", icon: Receipt },
 ];
 
@@ -674,6 +948,33 @@ function Dashboard({ data, setView }) {
     .sort((a, b) => b.number.localeCompare(a.number))
     .slice(0, 5);
 
+  const months = lastMonths(6);
+  const revenueByMonth = useMemo(() => {
+    const map = {};
+    months.forEach((m) => (map[m] = 0));
+    data.invoices
+      .filter((i) => i.status === "paid")
+      .forEach((i) => {
+        const key = monthKey(i.issueDate);
+        if (key in map) map[key] += i.items.reduce((s, it) => s + it.qty * it.rate, 0);
+      });
+    return months.map((m) => ({ label: monthLabel(m), value: map[m] }));
+  }, [data.invoices]);
+
+  // Completed-projects trend uses each project's deadline month as a proxy
+  // for "when it wrapped" — there's no separate completion date tracked yet.
+  const completedByMonth = useMemo(() => {
+    const map = {};
+    months.forEach((m) => (map[m] = 0));
+    data.projects
+      .filter((p) => p.status === "completed")
+      .forEach((p) => {
+        const key = monthKey(p.deadline);
+        if (key in map) map[key] += 1;
+      });
+    return months.map((m) => ({ label: monthLabel(m), value: map[m] }));
+  }, [data.projects]);
+
   return (
     <div className="view">
       <div className="stat-grid">
@@ -698,6 +999,23 @@ function Dashboard({ data, setView }) {
           <span className="stat-label">Collected</span>
           <strong className="stat-value">{fmtMoney(stats.paidThisPeriod)}</strong>
           <span className="stat-sub">marked paid</span>
+        </div>
+      </div>
+
+      <div className="panel-grid">
+        <div className="panel">
+          <div className="panel-head">
+            <h3><TrendingUp size={14} style={{ verticalAlign: "-2px", marginRight: 4 }} /> Monthly revenue</h3>
+            <span className="muted-note">last 6 months, paid invoices</span>
+          </div>
+          <MiniBarChart data={revenueByMonth} color="var(--green)" valueFormat={(v) => (v >= 1000 ? `${Math.round(v / 1000)}k` : v)} />
+        </div>
+        <div className="panel">
+          <div className="panel-head">
+            <h3><BarChart3 size={14} style={{ verticalAlign: "-2px", marginRight: 4 }} /> Completed projects</h3>
+            <span className="muted-note">last 6 months, by deadline</span>
+          </div>
+          <MiniBarChart data={completedByMonth} color="var(--blue)" />
         </div>
       </div>
 
@@ -1001,6 +1319,7 @@ function ProjectsView({ data, mutate }) {
   const [modal, setModal] = useState(null);
   const [confirmId, setConfirmId] = useState(null);
   const [filesFor, setFilesFor] = useState(null);
+  const [expensesFor, setExpensesFor] = useState(null);
   const toast = useToast();
 
   const clientName = (id) => data.clients.find((c) => c.id === id)?.company || "Unassigned";
@@ -1114,6 +1433,9 @@ function ProjectsView({ data, mutate }) {
                     <KeyRound size={11} /> {p.portalCode || "no code"} <Copy size={10} />
                   </button>
                   <div className="ticket-actions">
+                    <button className="icon-btn" onClick={() => setExpensesFor(p)} title="Expenses & profit">
+                      <Wallet size={14} />
+                    </button>
                     <button className="icon-btn" onClick={() => setFilesFor(p)} title="Project files">
                       <FolderOpen size={14} />
                     </button>
@@ -1146,6 +1468,10 @@ function ProjectsView({ data, mutate }) {
             }
           />
         </Modal>
+      )}
+
+      {expensesFor && (
+        <ExpenseManager project={expensesFor} data={data} mutate={mutate} onClose={() => setExpensesFor(null)} />
       )}
 
       {modal && (
@@ -1224,6 +1550,126 @@ function TaskForm({ initial, projects, onSave, onCancel }) {
         <button type="submit" className="btn btn-primary" disabled={!canSave}>Save task</button>
       </div>
     </form>
+  );
+}
+
+/* ---------------------- weekly time view ---------------------- */
+function TimeView({ data, mutate }) {
+  const toast = useToast();
+  const [weekOffset, setWeekOffset] = useState(0);
+  const [confirmId, setConfirmId] = useState(null);
+  const [form, setForm] = useState({ projectId: data.projects[0]?.id || "", hours: "", date: todayISO(), note: "" });
+
+  const { start, end } = weekRange(weekOffset);
+  const weekEntries = data.timeEntries.filter((t) => t.date >= start && t.date <= end);
+
+  const projectName = (id) => data.projects.find((p) => p.id === id)?.name || "Unassigned";
+
+  const byProject = useMemo(() => {
+    const map = {};
+    weekEntries.forEach((t) => {
+      map[t.projectId] = (map[t.projectId] || 0) + (Number(t.hours) || 0);
+    });
+    return Object.entries(map)
+      .map(([projectId, hours]) => ({ projectId, hours }))
+      .sort((a, b) => b.hours - a.hours);
+  }, [weekEntries]);
+
+  const totalHours = weekEntries.reduce((s, t) => s + (Number(t.hours) || 0), 0);
+
+  const logTime = (e) => {
+    e.preventDefault();
+    if (!form.projectId || !form.hours) return;
+    mutate({
+      ...data,
+      timeEntries: [...data.timeEntries, { id: uid("time"), projectId: form.projectId, hours: Number(form.hours) || 0, date: form.date, note: form.note }],
+    });
+    toast(`${form.hours}h logged`);
+    setForm((f) => ({ ...f, hours: "", note: "" }));
+  };
+
+  const deleteEntry = (id) => {
+    mutate({ ...data, timeEntries: data.timeEntries.filter((t) => t.id !== id) });
+    setConfirmId(null);
+    toast("Time entry removed");
+  };
+
+  return (
+    <div className="view">
+      <div className="toolbar">
+        <div className="week-nav">
+          <button className="icon-btn" onClick={() => setWeekOffset((w) => w - 1)} title="Previous week">
+            <ChevronRight size={14} style={{ transform: "rotate(180deg)" }} />
+          </button>
+          <span className="week-range">{fmtDate(start)} – {fmtDate(end)}</span>
+          <button className="icon-btn" onClick={() => setWeekOffset((w) => w + 1)} title="Next week">
+            <ChevronRight size={14} />
+          </button>
+          {weekOffset !== 0 && (
+            <button className="btn btn-ghost btn-sm" onClick={() => setWeekOffset(0)}>This week</button>
+          )}
+        </div>
+        <span className="week-total"><Clock3 size={13} /> {totalHours}h logged</span>
+      </div>
+
+      <div className="panel">
+        <div className="panel-head"><h3>Log time</h3></div>
+        <form className="field-row time-log-form" onSubmit={logTime}>
+          <select value={form.projectId} onChange={(e) => setForm((f) => ({ ...f, projectId: e.target.value }))} required>
+            {data.projects.length === 0 && <option value="">Add a project first</option>}
+            {data.projects.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+          <input type="number" min="0" step="0.5" placeholder="Hours" value={form.hours} onChange={(e) => setForm((f) => ({ ...f, hours: e.target.value }))} required />
+          <input type="date" value={form.date} onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))} />
+          <input placeholder="Note (optional)" value={form.note} onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))} />
+          <button type="submit" className="btn btn-primary btn-sm" disabled={data.projects.length === 0}><Plus size={13} /> Log</button>
+        </form>
+      </div>
+
+      <div className="panel-grid">
+        <div className="panel">
+          <div className="panel-head"><h3>Hours by project this week</h3></div>
+          {byProject.length === 0 ? (
+            <p className="muted-note">No time logged for this week yet.</p>
+          ) : (
+            <ul className="mini-list">
+              {byProject.map((row) => (
+                <li key={row.projectId}>
+                  <div><strong>{projectName(row.projectId)}</strong></div>
+                  <Stamp label={`${row.hours}h`} color="var(--blue)" size="sm" />
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div className="panel">
+          <div className="panel-head"><h3>Entries this week</h3></div>
+          {weekEntries.length === 0 ? (
+            <p className="muted-note">Nothing logged yet — add an entry above.</p>
+          ) : (
+            <ul className="mini-list">
+              {[...weekEntries].sort((a, b) => b.date.localeCompare(a.date)).map((t) => (
+                <li key={t.id} style={{ position: "relative" }}>
+                  <div>
+                    <strong>{projectName(t.projectId)} — {t.hours}h</strong>
+                    <span>{fmtDate(t.date)}{t.note ? ` · ${t.note}` : ""}</span>
+                  </div>
+                  <button className="icon-btn icon-btn-danger" onClick={() => setConfirmId(t.id)}><Trash2 size={12} /></button>
+                  {confirmId === t.id && (
+                    <div className="confirm-floating">
+                      <ConfirmDelete label={`${t.hours}h entry`} onConfirm={() => deleteEntry(t.id)} onCancel={() => setConfirmId(null)} />
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1951,6 +2397,7 @@ const VIEW_TITLES = {
   clients: { title: "Clients", sub: "Every account on the books" },
   projects: { title: "Projects", sub: "Active and past job tickets" },
   tasks: { title: "Tasks", sub: "Work in motion across projects" },
+  time: { title: "Time", sub: "Hours logged by project, week by week" },
   invoices: { title: "Invoices", sub: "Billing and collections" },
 };
 
@@ -1965,6 +2412,7 @@ export default function StudioOpsERP() {
   const [toasts, setToasts] = useState([]);
   const [navOpen, setNavOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
 
   const pushToast = useCallback((message, type = "success") => {
     const id = uid("toast");
@@ -1987,6 +2435,17 @@ export default function StudioOpsERP() {
     setView(v);
     setNavOpen(false);
   };
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   // Portal routes are public and must work whether or not anyone is signed
   // in on this device, so they're checked before the auth gate below.
@@ -2086,7 +2545,14 @@ export default function StudioOpsERP() {
                 <p>{VIEW_TITLES[view].sub}</p>
               </div>
             </div>
-            <div className="topbar-date">{fmtDate(todayISO())}</div>
+            <div className="topbar-right">
+              <button className="search-trigger" onClick={() => setSearchOpen(true)}>
+                <Search size={14} />
+                <span>Search…</span>
+                <em>Ctrl K</em>
+              </button>
+              <span className="topbar-date">{fmtDate(todayISO())}</span>
+            </div>
           </header>
 
           {dataStatus === "error" && (
@@ -2102,6 +2568,7 @@ export default function StudioOpsERP() {
               {view === "clients" && <ClientsView data={data} mutate={mutate} />}
               {view === "projects" && <ProjectsView data={data} mutate={mutate} />}
               {view === "tasks" && <TasksView data={data} mutate={mutate} />}
+              {view === "time" && <TimeView data={data} mutate={mutate} />}
               {view === "invoices" && <InvoicesView data={data} mutate={mutate} />}
             </div>
           </div>
@@ -2116,6 +2583,9 @@ export default function StudioOpsERP() {
               pushToast("Studio settings saved");
             }}
           />
+        )}
+        {searchOpen && (
+          <GlobalSearchModal data={data} onClose={() => setSearchOpen(false)} onNavigate={goTo} />
         )}
         <ToastHost toasts={toasts} onDismiss={dismissToast} />
       </div>
@@ -2240,6 +2710,13 @@ const CSS = `
 .topbar h1 { font-size: 25px; }
 .topbar p { margin: 4px 0 0; color: var(--muted); font-size: 12.5px; }
 .topbar-date { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--muted); }
+.topbar-right { display: flex; align-items: center; gap: 14px; }
+.search-trigger {
+  display: flex; align-items: center; gap: 7px; background: var(--paper-raised); border: 1.5px solid var(--rule);
+  border-radius: 6px; padding: 7px 10px; color: var(--muted); font-size: 12.5px; transition: border-color 0.15s ease, color 0.15s ease;
+}
+.search-trigger:hover { border-color: var(--ink); color: var(--ink); }
+.search-trigger em { font-style: normal; font-family: 'IBM Plex Mono', monospace; font-size: 10px; border: 1px solid var(--rule); border-radius: 3px; padding: 1px 5px; margin-left: 4px; }
 .conn-warning {
   display: flex; align-items: center; gap: 8px; background: #FCEEEF; color: var(--red);
   border-bottom: 1px solid var(--red); font-size: 12px; padding: 8px 34px; flex-shrink: 0;
@@ -2357,6 +2834,7 @@ const CSS = `
 .ticket-foot { display: flex; align-items: center; justify-content: space-between; padding-top: 8px; border-top: 1px solid var(--paper-dim); }
 .ticket-actions { display: flex; gap: 6px; }
 .amount-warn { color: var(--red); font-weight: 600; font-size: 12px; }
+.amount-good { color: var(--green); font-weight: 600; font-size: 12px; }
 .amount-quiet { color: var(--muted); font-size: 12px; }
 
 .progress-track { position: relative; height: 6px; background: var(--paper-dim); border-radius: 4px; margin-top: 10px; overflow: hidden; }
@@ -2531,7 +3009,7 @@ const CSS = `
 .file-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .file-list li {
   display: flex; align-items: center; gap: 10px; padding: 9px 10px; border: 1px solid var(--rule);
-  border-radius: 6px; background: var(--paper-raised); color: var(--muted);
+  border-radius: 6px; background: var(--paper-raised); color: var(--muted); position: relative;
 }
 .file-list-info { display: flex; flex-direction: column; flex: 1; min-width: 0; }
 .file-list-info strong { font-size: 12.5px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2588,6 +3066,61 @@ const CSS = `
 @keyframes toastIn { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
 @media (max-width: 720px) {
   .toast-host { left: 16px; right: 16px; bottom: 16px; max-width: none; }
+}
+
+/* mini bar chart */
+.mini-chart { width: 100%; }
+.mini-chart-bars { display: flex; align-items: flex-end; height: 100%; gap: 6px; padding-top: 18px; }
+.mini-chart-col { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; gap: 4px; }
+.mini-chart-value { font-size: 10px; font-family: 'IBM Plex Mono', monospace; color: var(--muted); }
+.mini-chart-bar { width: 60%; border-radius: 3px 3px 0 0; min-height: 2px; transition: height 0.3s ease; }
+.mini-chart-label { font-size: 10px; color: var(--muted); font-family: 'IBM Plex Mono', monospace; }
+
+/* expense manager */
+.expense-summary { display: flex; gap: 22px; padding: 12px 14px; background: var(--paper-dim); border-radius: 7px; margin-bottom: 16px; }
+.expense-summary > div { display: flex; flex-direction: column; gap: 2px; }
+.expense-summary strong { font-family: 'Fraunces', serif; font-size: 17px; }
+.expense-add-row { grid-template-columns: 1fr 110px 140px 34px; margin-bottom: 14px; }
+
+/* time view */
+.week-nav { display: flex; align-items: center; gap: 8px; }
+.week-range { font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; color: var(--ink); min-width: 170px; text-align: center; }
+.week-total { display: flex; align-items: center; gap: 6px; margin-left: auto; font-size: 12.5px; color: var(--muted); font-weight: 600; }
+.time-log-form { align-items: center; }
+.time-log-form select, .time-log-form input { flex: 1; }
+.time-log-form input[type="number"] { max-width: 90px; }
+.time-log-form input[type="date"] { max-width: 150px; }
+
+/* global search */
+.search-sheet { width: 560px; max-width: 100%; max-height: 70vh; display: flex; flex-direction: column; }
+.search-input-row { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--rule); color: var(--muted); flex-shrink: 0; }
+.search-input-row input { border: none; background: transparent; font-size: 15px; padding: 4px 0; }
+.search-input-row input:focus { border: none; }
+.search-results { overflow-y: auto; padding: 10px 8px 16px; }
+.search-hint { padding: 20px 16px; text-align: center; }
+.search-group { margin-bottom: 10px; }
+.search-group-label {
+  display: flex; align-items: center; gap: 6px; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--muted); padding: 6px 10px 4px;
+}
+.search-result-row {
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 10px; border-radius: 6px;
+  background: transparent; border: none; text-align: left; font-size: 13px; color: var(--ink);
+}
+.search-result-row:hover { background: var(--paper-dim); }
+.search-result-row span:first-child { font-weight: 600; }
+.search-result-row span:nth-child(2) { flex: 1; }
+.search-result-row svg { color: var(--muted); flex-shrink: 0; }
+
+@media (max-width: 720px) {
+  .expense-add-row { grid-template-columns: 1fr; gap: 6px; }
+  .time-log-form { flex-direction: column; align-items: stretch; }
+  .time-log-form input[type="number"], .time-log-form input[type="date"] { max-width: none; }
+  .week-total { margin-left: 0; }
+  .search-sheet { width: 100%; }
+  .topbar-right { gap: 8px; }
+  .search-trigger span { display: none; }
+  .search-trigger em { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
