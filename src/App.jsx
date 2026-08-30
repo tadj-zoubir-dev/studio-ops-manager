@@ -29,7 +29,6 @@ import {
   Copy,
   GripVertical,
   Settings,
-  Printer,
   Eye,
   Sparkles,
   ListPlus,
@@ -51,6 +50,8 @@ import {
   MessageCircle,
 } from "lucide-react";
 import { supabase, FILES_BUCKET } from "./supabaseClient.js";
+import { jsPDF } from "jspdf";
+import html2canvas from "html2canvas";
 
 /* ============================================================
    STUDIO OPS — a job-ticket / traffic-sheet ERP for a creative
@@ -2189,16 +2190,53 @@ function InvoicePrintable({ invoice, client, project, settings }) {
 }
 
 function InvoicePreviewModal({ invoice, client, project, settings, onClose }) {
+  const printRef = useRef(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const toast = useToast();
+
+  const downloadPdf = async () => {
+    const node = printRef.current;
+    if (!node || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const rect = node.getBoundingClientRect();
+      const canvas = await html2canvas(node, {
+        scale: 2,
+        backgroundColor: "#ffffff",
+        useCORS: true,
+      });
+      const imgData = canvas.toDataURL("image/png");
+      const pdf = new jsPDF({
+        orientation: rect.height >= rect.width ? "portrait" : "landscape",
+        unit: "px",
+        format: [rect.width, rect.height],
+        hotfixes: ["px_scaling"],
+      });
+      pdf.addImage(imgData, "PNG", 0, 0, rect.width, rect.height);
+      pdf.save(`Invoice-${invoice.number}.pdf`);
+      toast?.("PDF downloaded");
+    } catch (err) {
+      setError("Couldn't generate the PDF — try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <Modal title={`Invoice #${invoice.number}`} onClose={onClose} wide>
       <div className="invoice-preview-actions no-print">
-        <button className="btn btn-primary" onClick={() => window.print()}>
-          <Printer size={14} /> Download / Print PDF
+        <button className="btn btn-primary" onClick={downloadPdf} disabled={busy}>
+          {busy ? <Loader2 size={14} className="spin" /> : <Download size={14} />}
+          {busy ? "Preparing PDF…" : "Download PDF"}
         </button>
-        <span className="field-hint">Opens your browser's print dialog — choose "Save as PDF" as the destination.</span>
+        {error && <span className="field-hint field-hint-error">{error}</span>}
       </div>
       <div className="invoice-print-frame">
-        <InvoicePrintable invoice={invoice} client={client} project={project} settings={settings} />
+        <div ref={printRef}>
+          <InvoicePrintable invoice={invoice} client={client} project={project} settings={settings} />
+        </div>
       </div>
     </Modal>
   );
@@ -3093,14 +3131,6 @@ const CSS = `
 }
 .invoice-print-footer span { display: flex; align-items: center; gap: 5px; }
 .invoice-print-fineprint { margin: 10px 0 0; font-size: 10.5px; color: var(--inv-muted); text-align: center; }
-
-@media print {
-  .no-print { display: none !important; }
-  body * { visibility: hidden; }
-  .invoice-print, .invoice-print * { visibility: visible; }
-  .invoice-print { position: fixed; top: 0; left: 0; width: 100%; margin: 0; box-shadow: none; }
-  @page { margin: 14mm; }
-}
 
 /* modal */
 .modal-veil {
