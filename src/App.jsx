@@ -35,6 +35,7 @@ import {
   Building,
   Mail,
   Lock,
+  Clock,
   Wallet,
   Clock3,
   TrendingUp,
@@ -97,6 +98,8 @@ const DEFAULT_SETTINGS = {
   paymentMethod: "",
   logoDataUrl: "",
   invoiceNote: "Thank you for the opportunity — payment is due by the date above.",
+  primaryColor: "#16294D",
+  accentColor: "#D64550",
 };
 
 const emptyData = () => ({
@@ -334,6 +337,20 @@ const INVOICE_STATUS = {
 const ToastContext = React.createContext(() => {});
 const useToast = () => useContext(ToastContext);
 
+/* ---------------------- trial period ---------------------- */
+const TRIAL_DAYS = 7;
+function getTrialInfo(session) {
+  const createdAt = session?.user?.created_at;
+  if (!createdAt) return { active: false, readOnly: false, daysLeft: TRIAL_DAYS };
+  const startedMs = new Date(createdAt).getTime();
+  if (Number.isNaN(startedMs)) return { active: false, readOnly: false, daysLeft: TRIAL_DAYS };
+  const elapsedDays = Math.floor((Date.now() - startedMs) / 86400000);
+  const daysLeft = Math.max(0, TRIAL_DAYS - elapsedDays);
+  return { active: true, readOnly: elapsedDays >= TRIAL_DAYS, daysLeft, startedAt: createdAt };
+}
+const TrialContext = React.createContext({ active: false, readOnly: false, daysLeft: TRIAL_DAYS });
+const useTrial = () => useContext(TrialContext);
+
 function ToastHost({ toasts, onDismiss }) {
   return (
     <div className="toast-host">
@@ -341,6 +358,19 @@ function ToastHost({ toasts, onDismiss }) {
         <div key={t.id} className={`toast toast-${t.type}`} onClick={() => onDismiss(t.id)}>
           {t.type === "error" ? <AlertTriangle size={14} /> : <CheckCircle2 size={14} />}
           <span>{t.message}</span>
+          {t.action && (
+            <button
+              type="button"
+              className="toast-action"
+              onClick={(e) => {
+                e.stopPropagation();
+                t.action.onClick();
+                onDismiss(t.id);
+              }}
+            >
+              {t.action.label}
+            </button>
+          )}
         </div>
       ))}
     </div>
@@ -426,11 +456,11 @@ function EmptyState({ icon: Icon, title, hint, actionLabel, onAction }) {
   );
 }
 
-function ConfirmDelete({ label, onConfirm, onCancel }) {
+function ConfirmDelete({ label, onConfirm, onCancel, undoable }) {
   return (
     <div className="confirm-row">
       <span>
-        <AlertTriangle size={14} /> Delete {label}? This can't be undone.
+        <AlertTriangle size={14} /> Delete {label}? {undoable ? "You can undo this for a few seconds after." : "This can't be undone."}
       </span>
       <div className="confirm-actions">
         <button className="btn btn-ghost btn-sm" onClick={onCancel}>Cancel</button>
@@ -454,6 +484,8 @@ function FileManager({ projectId, onCountChange, readOnly, portalCode }) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const { readOnly: trialLocked } = useTrial();
+  const canWrite = !readOnly && !trialLocked;
   const toast = readOnly ? () => {} : useToast();
 
   const loadFiles = useCallback(async () => {
@@ -499,6 +531,10 @@ function FileManager({ projectId, onCountChange, readOnly, portalCode }) {
     const picked = Array.from(e.target.files || []);
     e.target.value = "";
     if (picked.length === 0) return;
+    if (trialLocked) {
+      toast("Your 7-day trial has ended — this workspace is now read-only.", "error", { duration: 4200 });
+      return;
+    }
     setBusy(true);
     setError("");
     const oversized = picked.filter((f) => f.size > MAX_UPLOAD_BYTES);
@@ -535,6 +571,10 @@ function FileManager({ projectId, onCountChange, readOnly, portalCode }) {
   };
 
   const deleteFile = async (file) => {
+    if (trialLocked) {
+      toast("Your 7-day trial has ended — this workspace is now read-only.", "error", { duration: 4200 });
+      return;
+    }
     setError("");
     const { error: removeError } = await supabase.storage.from(FILES_BUCKET).remove([file.storage_path]);
     if (removeError) {
@@ -552,13 +592,16 @@ function FileManager({ projectId, onCountChange, readOnly, portalCode }) {
 
   return (
     <div className="file-manager">
-      {!readOnly && (
+      {canWrite && (
         <label className="upload-drop">
           <Upload size={16} />
           <span>{busy ? "Uploading…" : "Click to upload files"}</span>
           <em>Up to {fmtBytes(MAX_UPLOAD_BYTES)} per file</em>
           <input type="file" multiple hidden onChange={handleUpload} disabled={busy} />
         </label>
+      )}
+      {!readOnly && trialLocked && (
+        <p className="muted-note inline-warn"><Lock size={12} /> Read-only — your 7-day trial has ended.</p>
       )}
       {error && <p className="file-error"><AlertTriangle size={12} /> {error}</p>}
 
@@ -578,7 +621,7 @@ function FileManager({ projectId, onCountChange, readOnly, portalCode }) {
               <a className="icon-btn" href={publicUrlFor(f.storage_path)} download={f.name} target="_blank" rel="noreferrer" title="Download">
                 <Download size={14} />
               </a>
-              {!readOnly && (
+              {canWrite && (
                 <button className="icon-btn icon-btn-danger" onClick={() => deleteFile(f)} title="Delete">
                   <Trash2 size={14} />
                 </button>
@@ -598,6 +641,7 @@ function FileManager({ projectId, onCountChange, readOnly, portalCode }) {
    computed as invoiced revenue minus what it actually cost to deliver. */
 function ExpenseManager({ project, data, mutate, onClose }) {
   const toast = useToast();
+  const { readOnly: locked } = useTrial();
   const [form, setForm] = useState({ description: "", amount: "", date: todayISO(), category: "" });
   const [confirmId, setConfirmId] = useState(null);
 
@@ -610,6 +654,10 @@ function ExpenseManager({ project, data, mutate, onClose }) {
 
   const addExpense = (e) => {
     e.preventDefault();
+    if (locked) {
+      toast("Your 7-day trial has ended — this workspace is now read-only.", "error", { duration: 4200 });
+      return;
+    }
     if (!form.description.trim() || !form.amount) return;
     mutate({
       ...data,
@@ -623,6 +671,11 @@ function ExpenseManager({ project, data, mutate, onClose }) {
   };
 
   const deleteExpense = (id) => {
+    if (locked) {
+      toast("Your 7-day trial has ended — this workspace is now read-only.", "error", { duration: 4200 });
+      setConfirmId(null);
+      return;
+    }
     const exp = data.expenses.find((e) => e.id === id);
     mutate({ ...data, expenses: data.expenses.filter((e) => e.id !== id) });
     setConfirmId(null);
@@ -646,11 +699,16 @@ function ExpenseManager({ project, data, mutate, onClose }) {
         </div>
       </div>
 
+      {locked && (
+        <p className="muted-note inline-warn"><Lock size={12} /> Read-only — your 7-day trial has ended.</p>
+      )}
+
       <form className="line-item-row expense-add-row" onSubmit={addExpense}>
         <input
           placeholder="Description"
           value={form.description}
           onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+          disabled={locked}
         />
         <input
           type="number"
@@ -658,9 +716,10 @@ function ExpenseManager({ project, data, mutate, onClose }) {
           placeholder="Amount"
           value={form.amount}
           onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))}
+          disabled={locked}
         />
-        <input type="date" value={form.date} onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))} />
-        <button type="submit" className="icon-btn"><Plus size={14} /></button>
+        <input type="date" value={form.date} onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))} disabled={locked} />
+        <button type="submit" className="icon-btn" disabled={locked}><Plus size={14} /></button>
       </form>
 
       {expenses.length === 0 ? (
@@ -674,9 +733,11 @@ function ExpenseManager({ project, data, mutate, onClose }) {
                 <strong>{e.description}</strong>
                 <span>{fmtMoney(e.amount)} · {fmtDate(e.date)}{e.category ? ` · ${e.category}` : ""}</span>
               </div>
-              <button className="icon-btn icon-btn-danger" onClick={() => setConfirmId(e.id)} title="Delete">
-                <Trash2 size={14} />
-              </button>
+              {!locked && (
+                <button className="icon-btn icon-btn-danger" onClick={() => setConfirmId(e.id)} title="Delete">
+                  <Trash2 size={14} />
+                </button>
+              )}
               {confirmId === e.id && (
                 <div className="confirm-floating">
                   <ConfirmDelete label={e.description} onConfirm={() => deleteExpense(e.id)} onCancel={() => setConfirmId(null)} />
@@ -693,6 +754,7 @@ function ExpenseManager({ project, data, mutate, onClose }) {
 function StudioSettingsModal({ settings, onSave, onClose }) {
   const [form, setForm] = useState(settings);
   const [logoError, setLogoError] = useState("");
+  const { readOnly: locked } = useTrial();
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   const onLogoPick = (e) => {
@@ -714,16 +776,26 @@ function StudioSettingsModal({ settings, onSave, onClose }) {
     reader.readAsDataURL(file);
   };
 
+  const setColor = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  const resetColors = () => setForm((f) => ({ ...f, primaryColor: DEFAULT_SETTINGS.primaryColor, accentColor: DEFAULT_SETTINGS.accentColor }));
+
   return (
-    <Modal title="Studio settings" onClose={onClose}>
+    <Modal title="Studio settings" onClose={onClose} wide>
       <form
         className="form-grid"
         onSubmit={(e) => {
           e.preventDefault();
+          if (locked) return;
           onSave(form);
         }}
       >
-        <p className="field-hint">This appears on the letterhead of every invoice you generate.</p>
+        {locked && (
+          <p className="field-hint field-hint-error"><Lock size={12} /> Your 7-day trial has ended — settings are read-only.</p>
+        )}
+        <fieldset className="form-fieldset" disabled={locked}>
+
+        <h4 className="settings-section-title">Appearance</h4>
+        <p className="field-hint">Controls how the dashboard looks — the sidebar mark, and the accent colors used across the app.</p>
 
         <Field label="Logo">
           <div className="logo-upload-row">
@@ -751,8 +823,28 @@ function StudioSettingsModal({ settings, onSave, onClose }) {
             </div>
           </div>
           {logoError && <p className="field-hint field-hint-error">{logoError}</p>}
-          {!logoError && <p className="field-hint">PNG, JPG or SVG, under 800 KB. Shown at the top of every invoice — falls back to the studio name if left empty.</p>}
+          {!logoError && <p className="field-hint">PNG, JPG or SVG, under 800 KB. Shown in the sidebar and at the top of every invoice — falls back to the studio's initials if left empty.</p>}
         </Field>
+
+        <div className="field-row">
+          <Field label="Primary color">
+            <div className="color-field-row">
+              <input type="color" className="color-swatch-input" value={form.primaryColor || DEFAULT_SETTINGS.primaryColor} onChange={setColor("primaryColor")} />
+              <input className="mono-input" value={form.primaryColor || DEFAULT_SETTINGS.primaryColor} onChange={setColor("primaryColor")} placeholder="#16294D" />
+            </div>
+          </Field>
+          <Field label="Accent color">
+            <div className="color-field-row">
+              <input type="color" className="color-swatch-input" value={form.accentColor || DEFAULT_SETTINGS.accentColor} onChange={setColor("accentColor")} />
+              <input className="mono-input" value={form.accentColor || DEFAULT_SETTINGS.accentColor} onChange={setColor("accentColor")} placeholder="#D64550" />
+            </div>
+          </Field>
+        </div>
+        <p className="field-hint">Primary sets the sidebar and headings; accent highlights active items, badges and stamps.</p>
+        <button type="button" className="link-btn appearance-reset-btn" onClick={resetColors}>Reset to default colors</button>
+
+        <h4 className="settings-section-title settings-section-title-spaced">Branding &amp; invoices</h4>
+        <p className="field-hint">This appears on the letterhead of every invoice you generate.</p>
 
         <Field label="Studio name">
           <input value={form.studioName} onChange={set("studioName")} placeholder="Studio Ops" required />
@@ -780,9 +872,10 @@ function StudioSettingsModal({ settings, onSave, onClose }) {
         <Field label="Default invoice note">
           <textarea rows={2} value={form.invoiceNote} onChange={set("invoiceNote")} />
         </Field>
+        </fieldset>
         <div className="form-actions">
           <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn btn-primary">Save settings</button>
+          <button type="submit" className="btn btn-primary" disabled={locked}>Save settings</button>
         </div>
       </form>
     </Modal>
@@ -942,14 +1035,23 @@ const NAV_ITEMS = [
   { key: "invoices", label: "Invoices", icon: Receipt },
 ];
 
-function Sidebar({ view, setView, counts, onOpenPortal, onOpenSettings, onSignOut, navOpen }) {
+function Sidebar({ view, setView, counts, onOpenPortal, onOpenSettings, onSignOut, navOpen, settings = DEFAULT_SETTINGS }) {
+  const initials = (settings.studioName || "Studio Ops")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase() || "SO";
   return (
     <aside className={`sidebar ${navOpen ? "sidebar-open" : ""}`}>
       <div className="brand">
-        <div className="brand-mark">SO</div>
+        <div className={`brand-mark ${settings.logoDataUrl ? "brand-mark-logo" : ""}`}>
+          {settings.logoDataUrl ? <img src={settings.logoDataUrl} alt={settings.studioName || "Logo"} /> : initials}
+        </div>
         <div className="brand-word">
-          <strong>STUDIO OPS</strong>
-          <span>traffic &amp; production</span>
+          <strong>{(settings.studioName || "Studio Ops").toUpperCase()}</strong>
+          <span>{settings.tagline || "traffic & production"}</span>
         </div>
       </div>
       <nav className="nav">
@@ -1188,6 +1290,7 @@ function ClientsView({ data, mutate }) {
   const [modal, setModal] = useState(null); // { mode: 'new'|'edit', client }
   const [confirmId, setConfirmId] = useState(null);
   const toast = useToast();
+  const { readOnly } = useTrial();
 
   const projectCount = (clientId) => data.projects.filter((p) => p.clientId === clientId).length;
   const outstandingFor = (clientId) =>
@@ -1200,6 +1303,7 @@ function ClientsView({ data, mutate }) {
   );
 
   const saveClient = (form) => {
+    if (readOnly) return;
     if (modal.mode === "edit") {
       mutate({
         ...data,
@@ -1217,6 +1321,7 @@ function ClientsView({ data, mutate }) {
   };
 
   const deleteClient = (id) => {
+    if (readOnly) return;
     const c = data.clients.find((x) => x.id === id);
     mutate({
       ...data,
@@ -1237,7 +1342,7 @@ function ClientsView({ data, mutate }) {
             onChange={(e) => setQuery(e.target.value)}
           />
         </div>
-        <button className="btn btn-primary" onClick={() => setModal({ mode: "new" })}>
+        <button className="btn btn-primary" onClick={() => setModal({ mode: "new" })} disabled={readOnly} title={readOnly ? "Read-only — trial has ended" : undefined}>
           <Plus size={15} /> New client
         </button>
       </div>
@@ -1247,7 +1352,7 @@ function ClientsView({ data, mutate }) {
           icon={Users}
           title={data.clients.length ? "No matches" : "No clients yet"}
           hint={data.clients.length ? "Try a different search." : "Add the first client to open a ledger for them."}
-          actionLabel={data.clients.length ? null : "New client"}
+          actionLabel={data.clients.length || readOnly ? null : "New client"}
           onAction={() => setModal({ mode: "new" })}
         />
       ) : (
@@ -1271,10 +1376,10 @@ function ClientsView({ data, mutate }) {
                   {outstandingFor(c.id) ? `${fmtMoney(outstandingFor(c.id))} due` : "No balance due"}
                 </span>
                 <div className="ticket-actions">
-                  <button className="icon-btn" onClick={() => setModal({ mode: "edit", client: c })}>
+                  <button className="icon-btn" onClick={() => setModal({ mode: "edit", client: c })} disabled={readOnly} title={readOnly ? "Read-only — trial has ended" : undefined}>
                     <Pencil size={14} />
                   </button>
-                  <button className="icon-btn icon-btn-danger" onClick={() => setConfirmId(c.id)}>
+                  <button className="icon-btn icon-btn-danger" onClick={() => setConfirmId(c.id)} disabled={readOnly} title={readOnly ? "Read-only — trial has ended" : undefined}>
                     <Trash2 size={14} />
                   </button>
                 </div>
@@ -1386,6 +1491,7 @@ function ProjectsView({ data, mutate }) {
   const [filesFor, setFilesFor] = useState(null);
   const [expensesFor, setExpensesFor] = useState(null);
   const toast = useToast();
+  const { readOnly: locked } = useTrial();
 
   const clientName = (id) => data.clients.find((c) => c.id === id)?.company || "Unassigned";
 
@@ -1403,6 +1509,7 @@ function ProjectsView({ data, mutate }) {
   };
 
   const saveProject = (form) => {
+    if (locked) return;
     if (modal.mode === "edit") {
       mutate({ ...data, projects: data.projects.map((p) => (p.id === modal.project.id ? { ...p, ...form } : p)) });
       toast(`${form.name} updated`);
@@ -1414,6 +1521,7 @@ function ProjectsView({ data, mutate }) {
   };
 
   const deleteProject = (id) => {
+    if (locked) return;
     const p = data.projects.find((x) => x.id === id);
     mutate({
       ...data,
@@ -1446,7 +1554,7 @@ function ProjectsView({ data, mutate }) {
             <option key={k} value={k}>{v.label}</option>
           ))}
         </select>
-        <button className="btn btn-primary" onClick={() => setModal({ mode: "new" })} disabled={data.clients.length === 0}>
+        <button className="btn btn-primary" onClick={() => setModal({ mode: "new" })} disabled={data.clients.length === 0 || locked} title={locked ? "Read-only — trial has ended" : undefined}>
           <Plus size={15} /> New project
         </button>
       </div>
@@ -1460,7 +1568,7 @@ function ProjectsView({ data, mutate }) {
           icon={Briefcase}
           title={data.projects.length ? "No matches" : "No projects yet"}
           hint={data.projects.length ? "Try a different search or filter." : "Open a job ticket for a client to start tracking work."}
-          actionLabel={data.projects.length || data.clients.length === 0 ? null : "New project"}
+          actionLabel={data.projects.length || data.clients.length === 0 || locked ? null : "New project"}
           onAction={() => setModal({ mode: "new" })}
         />
       ) : (
@@ -1504,10 +1612,10 @@ function ProjectsView({ data, mutate }) {
                     <button className="icon-btn" onClick={() => setFilesFor(p)} title="Project files">
                       <FolderOpen size={14} />
                     </button>
-                    <button className="icon-btn" onClick={() => setModal({ mode: "edit", project: p })}>
+                    <button className="icon-btn" onClick={() => setModal({ mode: "edit", project: p })} disabled={locked} title={locked ? "Read-only — trial has ended" : undefined}>
                       <Pencil size={14} />
                     </button>
-                    <button className="icon-btn icon-btn-danger" onClick={() => setConfirmId(p.id)}>
+                    <button className="icon-btn icon-btn-danger" onClick={() => setConfirmId(p.id)} disabled={locked} title={locked ? "Read-only — trial has ended" : undefined}>
                       <Trash2 size={14} />
                     </button>
                   </div>
@@ -1621,6 +1729,7 @@ function TaskForm({ initial, projects, onSave, onCancel }) {
 /* ---------------------- weekly time view ---------------------- */
 function TimeView({ data, mutate }) {
   const toast = useToast();
+  const { readOnly: locked } = useTrial();
   const [weekOffset, setWeekOffset] = useState(0);
   const [confirmId, setConfirmId] = useState(null);
   const [form, setForm] = useState({ projectId: data.projects[0]?.id || "", hours: "", date: todayISO(), note: "" });
@@ -1644,6 +1753,7 @@ function TimeView({ data, mutate }) {
 
   const logTime = (e) => {
     e.preventDefault();
+    if (locked) return;
     if (!form.projectId || !form.hours) return;
     mutate({
       ...data,
@@ -1654,6 +1764,7 @@ function TimeView({ data, mutate }) {
   };
 
   const deleteEntry = (id) => {
+    if (locked) return;
     mutate({ ...data, timeEntries: data.timeEntries.filter((t) => t.id !== id) });
     setConfirmId(null);
     toast("Time entry removed");
@@ -1679,17 +1790,20 @@ function TimeView({ data, mutate }) {
 
       <div className="panel">
         <div className="panel-head"><h3>Log time</h3></div>
+        {locked && (
+          <p className="muted-note inline-warn"><Lock size={12} /> Read-only — your 7-day trial has ended.</p>
+        )}
         <form className="field-row time-log-form" onSubmit={logTime}>
-          <select value={form.projectId} onChange={(e) => setForm((f) => ({ ...f, projectId: e.target.value }))} required>
+          <select value={form.projectId} onChange={(e) => setForm((f) => ({ ...f, projectId: e.target.value }))} required disabled={locked}>
             {data.projects.length === 0 && <option value="">Add a project first</option>}
             {data.projects.map((p) => (
               <option key={p.id} value={p.id}>{p.name}</option>
             ))}
           </select>
-          <input type="number" min="0" step="0.5" placeholder="Hours" value={form.hours} onChange={(e) => setForm((f) => ({ ...f, hours: e.target.value }))} required />
-          <input type="date" value={form.date} onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))} />
-          <input placeholder="Note (optional)" value={form.note} onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))} />
-          <button type="submit" className="btn btn-primary btn-sm" disabled={data.projects.length === 0}><Plus size={13} /> Log</button>
+          <input type="number" min="0" step="0.5" placeholder="Hours" value={form.hours} onChange={(e) => setForm((f) => ({ ...f, hours: e.target.value }))} required disabled={locked} />
+          <input type="date" value={form.date} onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))} disabled={locked} />
+          <input placeholder="Note (optional)" value={form.note} onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))} disabled={locked} />
+          <button type="submit" className="btn btn-primary btn-sm" disabled={data.projects.length === 0 || locked}><Plus size={13} /> Log</button>
         </form>
       </div>
 
@@ -1722,7 +1836,9 @@ function TimeView({ data, mutate }) {
                     <strong>{projectName(t.projectId)} — {t.hours}h</strong>
                     <span>{fmtDate(t.date)}{t.note ? ` · ${t.note}` : ""}</span>
                   </div>
-                  <button className="icon-btn icon-btn-danger" onClick={() => setConfirmId(t.id)}><Trash2 size={12} /></button>
+                  {!locked && (
+                    <button className="icon-btn icon-btn-danger" onClick={() => setConfirmId(t.id)}><Trash2 size={12} /></button>
+                  )}
                   {confirmId === t.id && (
                     <div className="confirm-floating">
                       <ConfirmDelete label={`${t.hours}h entry`} onConfirm={() => deleteEntry(t.id)} onCancel={() => setConfirmId(null)} />
@@ -1746,13 +1862,40 @@ function TasksView({ data, mutate }) {
   const [confirmId, setConfirmId] = useState(null);
   const [projectFilter, setProjectFilter] = useState("all");
   const [dragOverCol, setDragOverCol] = useState(null);
+  const [selected, setSelected] = useState(() => new Set());
+  const [bulkConfirm, setBulkConfirm] = useState(false);
   const toast = useToast();
+  const { readOnly: locked } = useTrial();
+
+  const dataRef = useRef(data);
+  useEffect(() => {
+    dataRef.current = data;
+  }, [data]);
 
   const projectName = (id) => data.projects.find((p) => p.id === id)?.name || "Unassigned";
 
   const visibleTasks = data.tasks.filter((t) => projectFilter === "all" || t.projectId === projectFilter);
+  const visibleIds = useMemo(() => new Set(visibleTasks.map((t) => t.id)), [visibleTasks]);
+
+  // Drop any selected ids that scrolled out of the current filter, so the
+  // bulk bar's count always matches what's actually selectable on screen.
+  useEffect(() => {
+    setSelected((s) => {
+      const next = new Set([...s].filter((id) => visibleIds.has(id)));
+      return next.size === s.size ? s : next;
+    });
+  }, [visibleIds]);
+
+  const toggleSelect = (id) =>
+    setSelected((s) => {
+      const next = new Set(s);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  const clearSelection = () => setSelected(new Set());
 
   const saveTask = (form) => {
+    if (locked) return;
     if (modal.mode === "edit") {
       mutate({ ...data, tasks: data.tasks.map((t) => (t.id === modal.task.id ? { ...t, ...form } : t)) });
       toast(`${form.title} updated`);
@@ -1764,6 +1907,7 @@ function TasksView({ data, mutate }) {
   };
 
   const deleteTask = (id) => {
+    if (locked) return;
     const t = data.tasks.find((x) => x.id === id);
     mutate({ ...data, tasks: data.tasks.filter((t) => t.id !== id) });
     setConfirmId(null);
@@ -1771,14 +1915,48 @@ function TasksView({ data, mutate }) {
   };
 
   const moveTask = (task, status) => {
+    if (locked) return;
     if (task.status === status) return;
     mutate({ ...data, tasks: data.tasks.map((t) => (t.id === task.id ? { ...t, status } : t)) });
     toast(`Moved to ${TASK_STATUS[status]?.label}`);
   };
 
+  const bulkMove = (status) => {
+    if (locked) return;
+    const ids = [...selected];
+    if (ids.length === 0 || !status) return;
+    mutate({ ...data, tasks: data.tasks.map((t) => (ids.includes(t.id) ? { ...t, status } : t)) });
+    toast(`${ids.length} task${ids.length === 1 ? "" : "s"} moved to ${TASK_STATUS[status]?.label}`);
+    clearSelection();
+  };
+
+  const bulkDelete = () => {
+    if (locked) return;
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    const removed = data.tasks.filter((t) => ids.includes(t.id));
+    mutate({ ...data, tasks: data.tasks.filter((t) => !ids.includes(t.id)) });
+    clearSelection();
+    setBulkConfirm(false);
+    toast(`${removed.length} task${removed.length === 1 ? "" : "s"} deleted`, "success", {
+      duration: 6000,
+      action: {
+        label: "Undo",
+        onClick: () => {
+          const current = dataRef.current;
+          const stillMissing = removed.filter((t) => !current.tasks.some((x) => x.id === t.id));
+          if (stillMissing.length === 0) return;
+          mutate({ ...current, tasks: [...current.tasks, ...stillMissing] });
+          toast(`Restored ${stillMissing.length} task${stillMissing.length === 1 ? "" : "s"}`);
+        },
+      },
+    });
+  };
+
   const handleDrop = (col) => (e) => {
     e.preventDefault();
     setDragOverCol(null);
+    if (locked) return;
     const taskId = e.dataTransfer.getData("text/plain");
     const task = data.tasks.find((t) => t.id === taskId);
     if (task) moveTask(task, col);
@@ -1793,7 +1971,7 @@ function TasksView({ data, mutate }) {
             <option key={p.id} value={p.id}>{p.name}</option>
           ))}
         </select>
-        <button className="btn btn-primary" onClick={() => setModal({ mode: "new" })} disabled={data.projects.length === 0}>
+        <button className="btn btn-primary" onClick={() => setModal({ mode: "new" })} disabled={data.projects.length === 0 || locked} title={locked ? "Read-only — trial has ended" : undefined}>
           <Plus size={15} /> New task
         </button>
       </div>
@@ -1807,7 +1985,7 @@ function TasksView({ data, mutate }) {
           icon={CheckSquare}
           title={data.tasks.length ? "No matches" : "No tasks yet"}
           hint={data.tasks.length ? "Try a different project filter." : "Break a project into tasks to route work across the team."}
-          actionLabel={data.tasks.length || data.projects.length === 0 ? null : "New task"}
+          actionLabel={data.tasks.length || data.projects.length === 0 || locked ? null : "New task"}
           onAction={() => setModal({ mode: "new" })}
         />
       ) : (
@@ -1834,9 +2012,9 @@ function TasksView({ data, mutate }) {
                 <div className="board-col-body">
                   {colTasks.map((t) => (
                     <div
-                      className="task-card"
+                      className={`task-card ${selected.has(t.id) ? "task-card-selected" : ""}`}
                       key={t.id}
-                      draggable
+                      draggable={!locked}
                       onDragStart={(e) => {
                         e.dataTransfer.setData("text/plain", t.id);
                         e.dataTransfer.effectAllowed = "move";
@@ -1844,14 +2022,23 @@ function TasksView({ data, mutate }) {
                     >
                       <div className="task-card-top">
                         <div className="task-card-top-left">
+                          <input
+                            type="checkbox"
+                            className="bulk-checkbox"
+                            checked={selected.has(t.id)}
+                            onChange={() => toggleSelect(t.id)}
+                            onMouseDown={(e) => e.stopPropagation()}
+                            onClick={(e) => e.stopPropagation()}
+                            aria-label={`Select ${t.title}`}
+                          />
                           <GripVertical size={13} className="drag-handle" />
                           <Stamp label={TASK_PRIORITY[t.priority]?.label} color={TASK_PRIORITY[t.priority]?.color} size="sm" />
                         </div>
                         <div className="ticket-actions">
-                          <button className="icon-btn" onClick={() => setModal({ mode: "edit", task: t })}>
+                          <button className="icon-btn" onClick={() => setModal({ mode: "edit", task: t })} disabled={locked} title={locked ? "Read-only — trial has ended" : undefined}>
                             <Pencil size={12} />
                           </button>
-                          <button className="icon-btn icon-btn-danger" onClick={() => setConfirmId(t.id)}>
+                          <button className="icon-btn icon-btn-danger" onClick={() => setConfirmId(t.id)} disabled={locked} title={locked ? "Read-only — trial has ended" : undefined}>
                             <Trash2 size={12} />
                           </button>
                         </div>
@@ -1868,6 +2055,7 @@ function TasksView({ data, mutate }) {
                         className="mini-select"
                         value={t.status}
                         onChange={(e) => moveTask(t, e.target.value)}
+                        disabled={locked}
                       >
                         {Object.entries(TASK_STATUS).map(([k, v]) => (
                           <option key={k} value={k}>{v.label}</option>
@@ -1882,6 +2070,39 @@ function TasksView({ data, mutate }) {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {selected.size > 0 && (
+        <div className="bulk-bar">
+          <span className="bulk-bar-count">{selected.size} selected</span>
+          <select
+            className="mini-select"
+            value=""
+            onChange={(e) => bulkMove(e.target.value)}
+            disabled={locked}
+          >
+            <option value="">Move to…</option>
+            {Object.entries(TASK_STATUS).map(([k, v]) => (
+              <option key={k} value={k}>{v.label}</option>
+            ))}
+          </select>
+          <button className="btn btn-ghost btn-sm" onClick={() => setBulkConfirm(true)} disabled={locked}>
+            <Trash2 size={13} /> Delete
+          </button>
+          <button className="icon-btn" onClick={clearSelection} aria-label="Clear selection">
+            <X size={14} />
+          </button>
+          {bulkConfirm && (
+            <div className="bulk-bar-confirm">
+              <ConfirmDelete
+                label={`${selected.size} task${selected.size === 1 ? "" : "s"}`}
+                onConfirm={bulkDelete}
+                onCancel={() => setBulkConfirm(false)}
+                undoable
+              />
+            </div>
+          )}
         </div>
       )}
 
@@ -2247,7 +2468,15 @@ function InvoicesView({ data, mutate }) {
   const [confirmId, setConfirmId] = useState(null);
   const [statusFilter, setStatusFilter] = useState("all");
   const [previewFor, setPreviewFor] = useState(null);
+  const [selected, setSelected] = useState(() => new Set());
+  const [bulkConfirm, setBulkConfirm] = useState(false);
   const toast = useToast();
+  const { readOnly: locked } = useTrial();
+
+  const dataRef = useRef(data);
+  useEffect(() => {
+    dataRef.current = data;
+  }, [data]);
 
   const clientOf = (id) => data.clients.find((c) => c.id === id);
   const clientName = (id) => clientOf(id)?.company || "Unassigned";
@@ -2257,8 +2486,33 @@ function InvoicesView({ data, mutate }) {
     inv.status === "sent" && isOverdue(inv.dueDate) ? "overdue" : inv.status;
 
   const filtered = data.invoices.filter((inv) => statusFilter === "all" || effectiveStatus(inv) === statusFilter);
+  const filteredIds = useMemo(() => new Set(filtered.map((i) => i.id)), [filtered]);
+
+  useEffect(() => {
+    setSelected((s) => {
+      const next = new Set([...s].filter((id) => filteredIds.has(id)));
+      return next.size === s.size ? s : next;
+    });
+  }, [filteredIds]);
+
+  const toggleSelect = (id) =>
+    setSelected((s) => {
+      const next = new Set(s);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  const clearSelection = () => setSelected(new Set());
+  const allFilteredSelected = filtered.length > 0 && filtered.every((i) => selected.has(i.id));
+  const toggleSelectAll = () => {
+    if (allFilteredSelected) {
+      setSelected((s) => new Set([...s].filter((id) => !filteredIds.has(id))));
+    } else {
+      setSelected((s) => new Set([...s, ...filtered.map((i) => i.id)]));
+    }
+  };
 
   const saveInvoice = (form) => {
+    if (locked) return;
     if (modal.mode === "edit") {
       mutate({ ...data, invoices: data.invoices.map((i) => (i.id === modal.invoice.id ? { ...i, ...form } : i)) });
       toast(`Invoice #${form.number} updated`);
@@ -2274,10 +2528,43 @@ function InvoicesView({ data, mutate }) {
   };
 
   const deleteInvoice = (id) => {
+    if (locked) return;
     const inv = data.invoices.find((x) => x.id === id);
     mutate({ ...data, invoices: data.invoices.filter((i) => i.id !== id) });
     setConfirmId(null);
     toast(`Invoice #${inv?.number || ""} deleted`);
+  };
+
+  const bulkSetStatus = (status) => {
+    if (locked) return;
+    const ids = [...selected];
+    if (ids.length === 0 || !status) return;
+    mutate({ ...data, invoices: data.invoices.map((i) => (ids.includes(i.id) ? { ...i, status } : i)) });
+    toast(`${ids.length} invoice${ids.length === 1 ? "" : "s"} marked ${INVOICE_STATUS[status]?.label.toLowerCase()}`);
+    clearSelection();
+  };
+
+  const bulkDelete = () => {
+    if (locked) return;
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    const removed = data.invoices.filter((i) => ids.includes(i.id));
+    mutate({ ...data, invoices: data.invoices.filter((i) => !ids.includes(i.id)) });
+    clearSelection();
+    setBulkConfirm(false);
+    toast(`${removed.length} invoice${removed.length === 1 ? "" : "s"} deleted`, "success", {
+      duration: 6000,
+      action: {
+        label: "Undo",
+        onClick: () => {
+          const current = dataRef.current;
+          const stillMissing = removed.filter((i) => !current.invoices.some((x) => x.id === i.id));
+          if (stillMissing.length === 0) return;
+          mutate({ ...current, invoices: [...current.invoices, ...stillMissing] });
+          toast(`Restored ${stillMissing.length} invoice${stillMissing.length === 1 ? "" : "s"}`);
+        },
+      },
+    });
   };
 
   return (
@@ -2292,7 +2579,8 @@ function InvoicesView({ data, mutate }) {
         <button
           className="btn btn-primary"
           onClick={() => setModal({ mode: "new" })}
-          disabled={data.clients.length === 0}
+          disabled={data.clients.length === 0 || locked}
+          title={locked ? "Read-only — trial has ended" : undefined}
         >
           <Plus size={15} /> New invoice
         </button>
@@ -2307,7 +2595,7 @@ function InvoicesView({ data, mutate }) {
           icon={Receipt}
           title={data.invoices.length ? "No matches" : "No invoices yet"}
           hint={data.invoices.length ? "Try a different status filter." : "Bill a client once work is ready to go out the door."}
-          actionLabel={data.invoices.length || data.clients.length === 0 ? null : "New invoice"}
+          actionLabel={data.invoices.length || data.clients.length === 0 || locked ? null : "New invoice"}
           onAction={() => setModal({ mode: "new" })}
         />
       ) : (
@@ -2315,6 +2603,15 @@ function InvoicesView({ data, mutate }) {
           <table className="ledger">
             <thead>
               <tr>
+                <th className="ledger-check-col">
+                  <input
+                    type="checkbox"
+                    className="bulk-checkbox"
+                    checked={allFilteredSelected}
+                    onChange={toggleSelectAll}
+                    aria-label="Select all invoices"
+                  />
+                </th>
                 <th>Invoice</th>
                 <th>Client</th>
                 <th>Issued</th>
@@ -2326,7 +2623,16 @@ function InvoicesView({ data, mutate }) {
             </thead>
             <tbody>
               {filtered.map((inv) => (
-                <tr key={inv.id}>
+                <tr key={inv.id} className={selected.has(inv.id) ? "row-selected" : ""}>
+                  <td className="ledger-check-col">
+                    <input
+                      type="checkbox"
+                      className="bulk-checkbox"
+                      checked={selected.has(inv.id)}
+                      onChange={() => toggleSelect(inv.id)}
+                      aria-label={`Select invoice #${inv.number}`}
+                    />
+                  </td>
                   <td className="mono-cell">#{inv.number}</td>
                   <td>{clientName(inv.clientId)}</td>
                   <td>{fmtDate(inv.issueDate)}</td>
@@ -2344,10 +2650,10 @@ function InvoicesView({ data, mutate }) {
                       <button className="icon-btn" onClick={() => setPreviewFor(inv)} title="Preview & download">
                         <Eye size={14} />
                       </button>
-                      <button className="icon-btn" onClick={() => setModal({ mode: "edit", invoice: inv })}>
+                      <button className="icon-btn" onClick={() => setModal({ mode: "edit", invoice: inv })} disabled={locked} title={locked ? "Read-only — trial has ended" : undefined}>
                         <Pencil size={14} />
                       </button>
-                      <button className="icon-btn icon-btn-danger" onClick={() => setConfirmId(inv.id)}>
+                      <button className="icon-btn icon-btn-danger" onClick={() => setConfirmId(inv.id)} disabled={locked} title={locked ? "Read-only — trial has ended" : undefined}>
                         <Trash2 size={14} />
                       </button>
                     </div>
@@ -2361,6 +2667,42 @@ function InvoicesView({ data, mutate }) {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {selected.size > 0 && (
+        <div className="bulk-bar">
+          <span className="bulk-bar-count">{selected.size} selected</span>
+          <button className="btn btn-ghost btn-sm" onClick={() => bulkSetStatus("paid")} disabled={locked}>
+            <CheckCircle2 size={13} /> Mark paid
+          </button>
+          <select
+            className="mini-select"
+            value=""
+            onChange={(e) => bulkSetStatus(e.target.value)}
+            disabled={locked}
+          >
+            <option value="">Set status…</option>
+            {Object.entries(INVOICE_STATUS).map(([k, v]) => (
+              <option key={k} value={k}>{v.label}</option>
+            ))}
+          </select>
+          <button className="btn btn-ghost btn-sm" onClick={() => setBulkConfirm(true)} disabled={locked}>
+            <Trash2 size={13} /> Delete
+          </button>
+          <button className="icon-btn" onClick={clearSelection} aria-label="Clear selection">
+            <X size={14} />
+          </button>
+          {bulkConfirm && (
+            <div className="bulk-bar-confirm">
+              <ConfirmDelete
+                label={`${selected.size} invoice${selected.size === 1 ? "" : "s"}`}
+                onConfirm={bulkDelete}
+                onCancel={() => setBulkConfirm(false)}
+                undoable
+              />
+            </div>
+          )}
         </div>
       )}
 
@@ -2562,7 +2904,8 @@ const VIEW_TITLES = {
 
 export default function StudioOpsERP() {
   const session = useAuth(); // undefined = loading, null = signed out, object = signed in
-  const [data, mutate, dataStatus] = useStudioData(!!session);
+  const [data, rawMutate, dataStatus] = useStudioData(!!session);
+  const trial = useMemo(() => getTrialInfo(session), [session]);
 
   const [view, setView] = useState("dashboard");
   const [mode, setMode] = useState("studio"); // "studio" | "portal-gate" | "portal-view"
@@ -2573,12 +2916,23 @@ export default function StudioOpsERP() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
 
-  const pushToast = useCallback((message, type = "success") => {
+  const pushToast = useCallback((message, type = "success", opts = {}) => {
     const id = uid("toast");
-    setToasts((t) => [...t, { id, message, type }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3200);
+    setToasts((t) => [...t, { id, message, type, action: opts.action }]);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), opts.duration || 3200);
   }, []);
   const dismissToast = useCallback((id) => setToasts((t) => t.filter((x) => x.id !== id)), []);
+
+  const mutate = useCallback(
+    (next) => {
+      if (trial.readOnly) {
+        pushToast("Your 7-day trial has ended — this workspace is now read-only.", "error", { duration: 4200 });
+        return Promise.resolve();
+      }
+      return rawMutate(next);
+    },
+    [trial.readOnly, rawMutate, pushToast]
+  );
 
   const counts = useMemo(() => {
     if (!data) return {};
@@ -2675,13 +3029,21 @@ export default function StudioOpsERP() {
 
   return (
     <ToastContext.Provider value={pushToast}>
-      <div className="studio-ops">
+    <TrialContext.Provider value={trial}>
+      <div
+        className="studio-ops"
+        style={{
+          "--ink": (data.settings || DEFAULT_SETTINGS).primaryColor || DEFAULT_SETTINGS.primaryColor,
+          "--red": (data.settings || DEFAULT_SETTINGS).accentColor || DEFAULT_SETTINGS.accentColor,
+        }}
+      >
         <style>{CSS}</style>
         {navOpen && <div className="nav-veil" onClick={() => setNavOpen(false)} />}
         <Sidebar
           view={view}
           setView={goTo}
           counts={counts}
+          settings={data.settings || DEFAULT_SETTINGS}
           onOpenPortal={() => {
             setMode("portal-gate");
             setNavOpen(false);
@@ -2714,6 +3076,20 @@ export default function StudioOpsERP() {
             </div>
           </header>
 
+          {trial.active && (
+            trial.readOnly ? (
+              <div className="trial-banner trial-banner-expired">
+                <Lock size={13} />
+                <span>Your 7-day trial has ended. The workspace is now <strong>read-only</strong> — you can browse, but adding, editing, or deleting is disabled.</span>
+              </div>
+            ) : trial.daysLeft <= 3 ? (
+              <div className="trial-banner trial-banner-warn">
+                <Clock size={13} />
+                <span>{trial.daysLeft === 0 ? "Your trial ends today." : `${trial.daysLeft} day${trial.daysLeft === 1 ? "" : "s"} left in your trial.`} It'll switch to read-only once it ends.</span>
+              </div>
+            ) : null
+          )}
+
           {dataStatus === "error" && (
             <div className="conn-warning">
               <AlertTriangle size={13} />
@@ -2737,6 +3113,7 @@ export default function StudioOpsERP() {
             settings={data.settings || DEFAULT_SETTINGS}
             onClose={() => setSettingsOpen(false)}
             onSave={(settings) => {
+              if (trial.readOnly) return;
               mutate({ ...data, settings });
               setSettingsOpen(false);
               pushToast("Studio settings saved");
@@ -2748,6 +3125,7 @@ export default function StudioOpsERP() {
         )}
         <ToastHost toasts={toasts} onDismiss={dismissToast} />
       </div>
+    </TrialContext.Provider>
     </ToastContext.Provider>
   );
 }
@@ -2759,16 +3137,16 @@ const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
 .studio-ops {
-  --ink: #17181C;
-  --paper: #F6F5F1;
+  --ink: #16294D;
+  --paper: #F3F5FA;
   --paper-raised: #FFFFFF;
-  --paper-dim: #ECEAE3;
-  --rule: #DCD9CF;
-  --muted: #7A7768;
-  --red: #C4293C;
-  --green: #2F6B4F;
-  --amber: #B0721E;
-  --blue: #3457A6;
+  --paper-dim: #E8ECF5;
+  --rule: #DCE3EF;
+  --muted: #6B7686;
+  --red: #D64550;
+  --green: #22A06B;
+  --amber: #D9A441;
+  --blue: #2E6FF2;
   --violet: #6B4FA0;
 
   display: flex;
@@ -2828,8 +3206,10 @@ const CSS = `
   width: 34px; height: 34px; border: 2px solid var(--red); border-radius: 6px;
   display: flex; align-items: center; justify-content: center;
   font-family: 'Fraunces', serif; font-weight: 700; font-size: 13px; color: #fff;
-  flex-shrink: 0;
+  flex-shrink: 0; overflow: hidden; background: rgba(246,245,241,0.06);
 }
+.brand-mark-logo { padding: 3px; }
+.brand-mark img { width: 100%; height: 100%; object-fit: contain; }
 .brand-word { display: flex; flex-direction: column; line-height: 1.25; }
 .brand-word strong { font-family: 'Fraunces', serif; font-size: 15px; letter-spacing: 0.02em; }
 .brand-word span { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: rgba(246,245,241,0.5); }
@@ -2882,6 +3262,14 @@ const CSS = `
 }
 .conn-warning-soft { background: #FBF3E6; color: var(--amber); border-bottom-color: var(--amber); }
 .conn-warning .link-btn { margin-left: auto; color: inherit; text-decoration: underline; font-weight: 700; flex-shrink: 0; }
+
+.trial-banner {
+  display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600;
+  padding: 8px 34px; flex-shrink: 0; border-bottom: 1px solid transparent;
+}
+.trial-banner svg { flex-shrink: 0; }
+.trial-banner-warn { background: #FBF3E6; color: var(--amber); border-bottom-color: var(--amber); }
+.trial-banner-expired { background: #FCEEEF; color: var(--red); border-bottom-color: var(--red); }
 
 /* auth screen */
 .auth-input-row {
@@ -3008,6 +3396,25 @@ const CSS = `
 .confirm-actions { display: flex; gap: 6px; flex-shrink: 0; }
 .confirm-floating { position: absolute; right: 10px; top: 44px; z-index: 5; width: 230px; box-shadow: 0 6px 18px rgba(0,0,0,0.12); }
 
+/* bulk actions */
+.bulk-checkbox { width: 15px; height: 15px; accent-color: var(--ink); cursor: pointer; flex-shrink: 0; }
+.ledger-check-col { width: 34px; padding-right: 0 !important; }
+.row-selected { background: var(--paper-dim); }
+.task-card-selected { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
+.bulk-bar {
+  position: sticky; bottom: 14px; left: 0; z-index: 20; margin-top: 14px;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  background: var(--ink); color: var(--paper); border-radius: 9px; padding: 9px 12px;
+  box-shadow: 0 10px 24px rgba(0,0,0,0.22); animation: toastIn 0.15s ease;
+}
+.bulk-bar-count { font-size: 12.5px; font-weight: 600; margin-right: 4px; white-space: nowrap; }
+.bulk-bar .btn-ghost { border-color: rgba(255,255,255,0.3); color: var(--paper); }
+.bulk-bar .btn-ghost:hover { background: rgba(255,255,255,0.12); }
+.bulk-bar .mini-select { background: transparent; border-color: rgba(255,255,255,0.3); color: var(--paper); }
+.bulk-bar .icon-btn { color: var(--paper); }
+.bulk-bar .icon-btn:hover { background: rgba(255,255,255,0.12); }
+.bulk-bar-confirm { position: absolute; right: 0; bottom: 46px; width: 260px; box-shadow: 0 10px 24px rgba(0,0,0,0.25); }
+
 /* empty state */
 .empty-state {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
@@ -3037,6 +3444,8 @@ const CSS = `
 
 /* forms */
 .form-grid { display: flex; flex-direction: column; gap: 14px; }
+.form-fieldset { display: flex; flex-direction: column; gap: 14px; border: none; margin: 0; padding: 0; min-width: 0; }
+.form-fieldset:disabled { opacity: 0.6; }
 .field { display: flex; flex-direction: column; gap: 5px; flex: 1; }
 .field-label { font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
 .field-row { display: flex; gap: 12px; }
@@ -3167,14 +3576,59 @@ const CSS = `
     position: fixed; top: 0; left: 0; height: 100vh; z-index: 45;
     transform: translateX(-104%); transition: transform 0.22s ease;
     box-shadow: 12px 0 30px rgba(0,0,0,0.18);
+    width: 232px;
   }
   .sidebar-open { transform: translateX(0); }
   .nav-veil { position: fixed; inset: 0; background: rgba(23,24,28,0.45); z-index: 44; }
   .board { grid-template-columns: 1fr; }
-  .field-row { flex-direction: column; }
+  .field-row { flex-direction: column; gap: 14px; }
   .stat-grid { grid-template-columns: 1fr 1fr; }
   .toolbar { flex-wrap: wrap; }
   .search-box { max-width: none; }
+
+  /* topbar + page padding */
+  .topbar { padding: 16px 16px 14px; flex-wrap: wrap; row-gap: 10px; }
+  .topbar h1 { font-size: 19px; }
+  .topbar p { font-size: 12px; }
+  .topbar-right { width: 100%; justify-content: space-between; }
+  .main-scroll { padding: 18px 16px 44px; }
+  .conn-warning, .trial-banner { padding: 8px 16px; }
+  .view { gap: 16px; }
+
+  /* tickets */
+  .ticket-grid { grid-template-columns: 1fr; }
+  .ticket-foot { flex-wrap: wrap; gap: 8px; }
+
+  /* tables scroll horizontally instead of squeezing */
+  .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .ledger { min-width: 620px; }
+
+  /* invoice line items + summary strips */
+  .line-items-head, .line-item-row { grid-template-columns: 1fr 52px 82px 26px; gap: 6px; }
+  .expense-summary { flex-wrap: wrap; row-gap: 10px; column-gap: 20px; }
+  .expense-add-row { grid-template-columns: 1fr; }
+
+  /* modal + printable invoice */
+  .modal-sheet { max-height: 92vh; }
+  .modal-head { padding: 14px 16px; }
+  .modal-body { padding: 14px 16px 18px; }
+  .invoice-print { padding: 22px 18px 20px; }
+  .invoice-print-head { flex-direction: column; gap: 16px; }
+  .invoice-print-divider { display: none; }
+  .invoice-print-meta { align-items: flex-start; text-align: left; }
+  .invoice-print-totals { width: 100%; }
+  .invoice-preview-actions { gap: 8px; }
+
+  /* client portal */
+  .portal-view-head { flex-direction: column; }
+  .portal-shell-view { padding: 24px 14px; }
+}
+
+@media (max-width: 420px) {
+  .stat-grid { grid-template-columns: 1fr; }
+  .stat-value { font-size: 22px; }
+  .line-items-head, .line-item-row { grid-template-columns: 1fr 46px 68px 24px; }
+  .invoice-print-table th, .invoice-print-table td { padding: 10px; font-size: 12px; }
 }
 
 /* portal code + sidebar entry */
@@ -3184,6 +3638,17 @@ const CSS = `
 .field-hint { font-size: 11px; color: var(--muted); }
 .field-hint-error { color: var(--red); }
 
+.settings-section-title { font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.settings-section-title-spaced { margin-top: 6px; padding-top: 16px; border-top: 1px solid var(--rule); }
+.color-field-row { display: flex; align-items: center; gap: 8px; }
+.color-swatch-input {
+  -webkit-appearance: none; appearance: none; width: 34px; height: 34px; flex-shrink: 0;
+  padding: 0; border: 1.5px solid var(--rule); border-radius: 6px; background: none; cursor: pointer;
+}
+.color-swatch-input::-webkit-color-swatch-wrapper { padding: 2px; }
+.color-swatch-input::-webkit-color-swatch { border: none; border-radius: 4px; }
+.color-swatch-input::-moz-color-swatch { border: none; border-radius: 4px; }
+.appearance-reset-btn { align-self: flex-start; margin-top: -6px; }
 .logo-upload-row { display: flex; align-items: center; gap: 12px; }
 .logo-upload-preview {
   width: 72px; height: 72px; border-radius: 8px; border: 1.5px dashed var(--rule); background: var(--paper-raised);
@@ -3276,6 +3741,12 @@ const CSS = `
 }
 .toast-error { background: var(--red); color: #fff; }
 .toast svg { flex-shrink: 0; }
+.toast-action {
+  margin-left: 4px; padding: 3px 9px; border-radius: 5px; border: 1px solid rgba(255,255,255,0.35);
+  background: transparent; color: inherit; font-size: 11.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.03em; cursor: pointer; flex-shrink: 0;
+}
+.toast-action:hover { background: rgba(255,255,255,0.15); }
 @keyframes toastIn { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
 @media (max-width: 720px) {
   .toast-host { left: 16px; right: 16px; bottom: 16px; max-width: none; }
