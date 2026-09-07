@@ -1,34 +1,35 @@
-# Studio Ops — Creative Agency ERP (Single Manager Login)
+# Studio Ops — Creative Agency ERP (Per-Account Data)
 
-The simplest version of the Studio Ops ERP: exactly one login for the
-whole team — the manager's — created directly in Supabase, with no
-signup form anywhere in the app. Everyone else on the team works
-through the manager rather than having their own account. No billing,
-no multi-user accounts, no per-agency data isolation.
+Every account that signs up gets its own private workspace — clients,
+projects, tasks, invoices, expenses, time entries, files, and studio
+settings (logo, colors, invoice branding) all live under that one
+account and no other account can see them. There's no shared "team"
+row: sign-up is self-service from the app's own screen, and the first
+sign-in seeds a fresh account with sample data to explore.
 
-**If you want each team member to have their own login instead**, use
-the "single team" build — same shared data, but with a sign-up form so
-everyone can create their own account. **If you're planning to sell
-access to other agencies**, use the multi-tenant SaaS build, which
-keeps each customer's data completely separate and has Stripe billing
-wired in.
+The one thing every account still shares is code, not data: each
+project gets a random **portal code**, and anyone with that code can
+open the read-only **Client portal** to check a single project's
+status and files — without an account, and without seeing which
+account owns it, its budget, or anything else in that workspace.
 
 ## 1. Create a Supabase project
 
 1. https://supabase.com → **New project**.
 2. **SQL Editor** → **New query** → paste all of `supabase/schema.sql` → **Run**.
-   The comments explain the two portal functions (what let clients
-   check project status without an account) and, in section 6, exactly
-   how to create the one manager account this app needs.
+   The comments explain the storage/RLS setup and the two portal
+   functions that let clients check project status without an account.
 3. **Project Settings → API**: copy the **Project URL** and the **anon
    public** key.
-4. **Authentication → Users → Add user**: create the manager's login —
-   an email and password (or use "Send invite link" to have them set
-   their own password).
-5. **Authentication → Providers → Email**: turn off "Allow new users
-   to sign up". The app has no signup screen either way, but this
-   closes the door on someone signing up directly against the
-   Supabase API.
+4. **Authentication → Providers → Email**: make sure "Allow new users
+   to sign up" is **ON** — the app's own "Create account" form calls
+   `supabase.auth.signUp()`, so this needs to stay enabled for that to
+   work. Turn it off only if you'd rather add every account by hand via
+   **Authentication → Users → Add user**.
+5. Optional: **Authentication → Providers → Email → Confirm email**. If
+   that's on, new users get a confirmation email before they can sign
+   in — the app already shows a "check your email" message when that
+   happens, no extra work needed.
 
 ## 2. Configure and run locally
 
@@ -46,16 +47,14 @@ npm run dev
 
 ## 3. Try it out
 
-1. Sign in with the manager account you created in step 1 — this seeds
-   the dataset with sample clients and projects.
+1. Open the app and use **Create account** on the sign-in screen — this
+   seeds that account's own workspace with sample clients and projects.
 2. Open a project, note its **portal code**, and test the **Client
    portal** link (on the sign-in screen, or from the sidebar once
    signed in) — a portal visitor with that code sees only that
    project's status and files, nothing else in the system.
-3. Everyone else on the team uses the app either by looking over the
-   manager's shoulder, or — if you want them editing data too — you'll
-   want the "single team" build instead, which supports multiple
-   logins against the same shared data.
+3. Sign up again with a different email to confirm the second account
+   starts with its own separate workspace, not the first account's data.
 
 ## 4. Deploy
 
@@ -70,28 +69,28 @@ as Environment Variables in the Vercel project settings, then deploy.
 There's no `/api` folder in this build — it's a static site talking
 directly to Supabase.
 
-## What's different from the other builds
+## How the isolation works
 
-- No signup form anywhere in the app — `AuthScreen` is sign-in only.
-  The one account is created by hand in the Supabase dashboard.
-- Same shared `erp_state` row and Row Level Security as the "single
-  team" build (`auth.role() = 'authenticated'`) — technically nothing
-  stops you from creating a second Supabase user later if you change
-  your mind, since the policies don't hardcode a single user ID. The
-  enforcement that there's "only one user" is the missing signup form
-  plus disabling public signup in Supabase, not a database-level rule.
-- No `workspaces` table, no Stripe, no trial/billing UI.
-- Everything else — ticket/stamp design, Kanban board, invoice
-  auto-generation + PDF download, studio settings, file uploads, the
-  client portal — is unchanged.
+- `erp_state` has one row per account, and the row's `id` **is** that
+  account's Supabase auth user id. Row Level Security only lets a
+  request read/write the row whose `id` matches `auth.uid()`.
+- `project_files` carries a `user_id` column, checked the same way.
+- Uploaded files live in Storage at `<user_id>/<project_id>/<file>`;
+  bucket policies check that the first path segment matches
+  `auth.uid()` before allowing an insert or delete. Downloads stay
+  public (so client-portal file links work without login).
+- The two portal RPC functions (`get_portal_project`,
+  `get_portal_files`) are `SECURITY DEFINER`, so they bypass RLS
+  on purpose — that's the only sanctioned way to reach across
+  accounts, and each one hand-picks a narrow, safe set of fields.
 
 ## Project structure
 
 ```
 studio-ops-manager/
   src/
-    App.jsx              the whole app: sign-in, shared data, all
-                          views, the client portal, styles
+    App.jsx              the whole app: sign-in/sign-up, per-account
+                          data, all views, the client portal, styles
     supabaseClient.js     Supabase client setup
     main.jsx              React entry point
   supabase/

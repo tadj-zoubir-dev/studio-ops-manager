@@ -56,14 +56,13 @@ import html2canvas from "html2canvas";
 
 /* ============================================================
    STUDIO OPS — a job-ticket / traffic-sheet ERP for a creative
-   agency. Single-manager build: there is exactly one login (the
-   manager's — created directly in the Supabase dashboard, no
-   self-service signup in this app). Everything else on the team
-   works without an account. No billing, no per-account data
-   isolation. The client portal still reads through narrow,
-   curated RPC functions rather than touching the shared data
-   directly. See supabase/schema.sql for exactly what each
-   policy allows.
+   agency. Multi-tenant: anyone can create an account from the
+   sign-in screen, and each account gets its own private
+   workspace (clients, projects, tasks, invoices, files) — no
+   account can see another's data. The client portal still reads
+   through narrow, curated RPC functions rather than touching any
+   account's data directly. See supabase/schema.sql for exactly
+   what each policy allows.
    ============================================================ */
 
 const uid = (p) => `${p}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
@@ -185,18 +184,12 @@ function useAuth() {
   return session;
 }
 
-const STATE_ROW_ID = "team";
-// One shared erp_state row for the whole team. supabase/schema.sql
-// restricts read/write on this row to signed-in (authenticated) users
-// only — there's no per-user data split, because everyone on the team
-// is meant to see the same clients, projects, tasks, and invoices.
-
-function useStudioData(ready) {
+function useStudioData(userId) {
   const [data, setData] = useState(null);
   const [status, setStatus] = useState("loading"); // loading | ready | error
 
   useEffect(() => {
-    if (!ready) return;
+    if (!userId) return;
     let cancelled = false;
     (async () => {
       setStatus("loading");
@@ -204,7 +197,7 @@ function useStudioData(ready) {
         const { data: row, error } = await supabase
           .from("erp_state")
           .select("data")
-          .eq("id", STATE_ROW_ID)
+          .eq("id", userId)
           .maybeSingle();
         if (cancelled) return;
         if (error) throw error;
@@ -216,9 +209,11 @@ function useStudioData(ready) {
             settings: { ...DEFAULT_SETTINGS, ...(row.data.settings || {}) },
           });
         } else {
+          // First time this account has signed in — give them their own
+          // seeded workspace rather than someone else's data.
           const seed = seedData();
           setData(seed);
-          const { error: insertError } = await supabase.from("erp_state").insert({ id: STATE_ROW_ID, data: seed });
+          const { error: insertError } = await supabase.from("erp_state").insert({ id: userId, data: seed });
           if (insertError) console.error("Seed insert failed", insertError);
         }
         setStatus("ready");
@@ -233,19 +228,23 @@ function useStudioData(ready) {
     return () => {
       cancelled = true;
     };
-  }, [ready]);
+  }, [userId]);
 
-  const persist = useCallback(async (next) => {
-    setData(next);
-    try {
-      const { error } = await supabase
-        .from("erp_state")
-        .upsert({ id: STATE_ROW_ID, data: next, updated_at: new Date().toISOString() });
-      if (error) throw error;
-    } catch (e) {
-      console.error("Storage save failed", e);
-    }
-  }, []);
+  const persist = useCallback(
+    async (next) => {
+      setData(next);
+      if (!userId) return;
+      try {
+        const { error } = await supabase
+          .from("erp_state")
+          .upsert({ id: userId, data: next, updated_at: new Date().toISOString() });
+        if (error) throw error;
+      } catch (e) {
+        console.error("Storage save failed", e);
+      }
+    },
+    [userId]
+  );
 
   return [data, persist, status];
 }
@@ -472,14 +471,14 @@ function ConfirmDelete({ label, onConfirm, onCancel, undoable }) {
 
 /* ---------------------- project files ----------------------
    Real files in Supabase Storage (bucket "project-files"), one folder
-   per project. Studio side reads/writes the project_files table
-   directly (RLS restricts that to signed-in team members). The portal
-   (readOnly) can't touch that table at all — it goes through the
-   get_portal_files() RPC instead, the only file listing anonymous
-   visitors are allowed to call. See supabase/schema.sql. */
+   per account then per project. Studio side reads/writes the
+   project_files table directly (RLS restricts each account to its own
+   rows). The portal (readOnly) can't touch that table at all — it goes
+   through the get_portal_files() RPC instead, the only file listing
+   anonymous visitors are allowed to call. See supabase/schema.sql. */
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024; // 20MB per file
 
-function FileManager({ projectId, onCountChange, readOnly, portalCode }) {
+function FileManager({ projectId, userId, onCountChange, readOnly, portalCode }) {
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -545,7 +544,10 @@ function FileManager({ projectId, onCountChange, readOnly, portalCode }) {
     try {
       for (const f of accepted) {
         const fileId = uid("file");
-        const storagePath = `${projectId}/${fileId}-${f.name}`;
+        // Path is prefixed with the owner's user id so the storage bucket's
+        // RLS policies can enforce that one account can't touch another
+        // account's files (see supabase/schema.sql).
+        const storagePath = `${userId}/${projectId}/${fileId}-${f.name}`;
         const { error: uploadError } = await supabase.storage
           .from(FILES_BUCKET)
           .upload(storagePath, f, { upsert: false, contentType: f.type || "application/octet-stream" });
@@ -553,6 +555,7 @@ function FileManager({ projectId, onCountChange, readOnly, portalCode }) {
         const { error: insertError } = await supabase.from("project_files").insert({
           id: fileId,
           project_id: projectId,
+          user_id: userId,
           name: f.name,
           size: f.size,
           type: f.type || "application/octet-stream",
@@ -884,18 +887,48 @@ function StudioSettingsModal({ settings, onSave, onClose }) {
 
 /* ---------------------- auth screen ---------------------- */
 function AuthScreen({ onOpenPortal }) {
+  const [mode, setMode] = useState("signin"); // "signin" | "signup"
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  const switchMode = (next) => {
+    setMode(next);
+    setError("");
+    setNotice("");
+    setConfirmPassword("");
+  };
 
   const submit = async (e) => {
     e.preventDefault();
-    setBusy(true);
     setError("");
+    setNotice("");
+
+    if (mode === "signup" && password !== confirmPassword) {
+      setError("Passwords don't match.");
+      return;
+    }
+
+    setBusy(true);
     try {
-      const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
-      if (signInError) throw signInError;
+      if (mode === "signup") {
+        const { data: signUpData, error: signUpError } = await supabase.auth.signUp({ email, password });
+        if (signUpError) throw signUpError;
+        if (signUpData?.session) {
+          // Email confirmation is off on this project — signed in immediately.
+        } else {
+          setNotice("Account created — check your email to confirm it, then sign in.");
+          setMode("signin");
+          setPassword("");
+          setConfirmPassword("");
+        }
+      } else {
+        const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+        if (signInError) throw signInError;
+      }
     } catch (err) {
       setError(err.message || "Something went wrong.");
     }
@@ -908,8 +941,11 @@ function AuthScreen({ onOpenPortal }) {
         <div className="portal-badge">
           <Building size={20} />
         </div>
-        <h1>Sign in</h1>
-        <p>Welcome back to Studio Ops.</p>
+        <h1>{mode === "signup" ? "Create your account" : "Sign in"}</h1>
+        <p>{mode === "signup" ? "Set up access to the studio dashboard." : "Welcome back to Studio Ops."}</p>
+        <p className="field-hint auth-shared-note">
+          <ShieldCheck size={12} /> Your workspace is private — only you can see your clients, projects and invoices.
+        </p>
         <form onSubmit={submit} className="portal-gate-form">
           <div className="auth-input-row">
             <Mail size={14} />
@@ -919,11 +955,21 @@ function AuthScreen({ onOpenPortal }) {
             <Lock size={14} />
             <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" minLength={6} required />
           </div>
+          {mode === "signup" && (
+            <div className="auth-input-row">
+              <Lock size={14} />
+              <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} placeholder="Confirm password" minLength={6} required />
+            </div>
+          )}
           <button type="submit" className="btn btn-primary" disabled={busy}>
-            {busy ? "Signing in…" : "Sign in"}
+            {busy ? (mode === "signup" ? "Creating account…" : "Signing in…") : (mode === "signup" ? "Create account" : "Sign in")}
           </button>
         </form>
+        {notice && <p className="file-success"><CheckCircle2 size={12} /> {notice}</p>}
         {error && <p className="file-error"><AlertTriangle size={12} /> {error}</p>}
+        <button className="link-btn portal-back" onClick={() => switchMode(mode === "signup" ? "signin" : "signup")}>
+          {mode === "signup" ? "Already have an account? Sign in" : "New here? Create an account"}
+        </button>
         <button className="link-btn portal-back" onClick={onOpenPortal}>
           <KeyRound size={13} /> I'm a client — open the project portal
         </button>
@@ -1483,7 +1529,7 @@ function ProjectForm({ initial, clients, onSave, onCancel }) {
   );
 }
 
-function ProjectsView({ data, mutate }) {
+function ProjectsView({ data, mutate, userId }) {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [modal, setModal] = useState(null);
@@ -1633,6 +1679,7 @@ function ProjectsView({ data, mutate }) {
         <Modal title={`Files — ${filesFor.name}`} onClose={() => setFilesFor(null)} wide>
           <FileManager
             projectId={filesFor.id}
+            userId={userId}
             onCountChange={(count) =>
               mutate({
                 ...data,
@@ -2904,7 +2951,7 @@ const VIEW_TITLES = {
 
 export default function StudioOpsERP() {
   const session = useAuth(); // undefined = loading, null = signed out, object = signed in
-  const [data, rawMutate, dataStatus] = useStudioData(!!session);
+  const [data, rawMutate, dataStatus] = useStudioData(session?.user?.id);
   const trial = useMemo(() => getTrialInfo(session), [session]);
 
   const [view, setView] = useState("dashboard");
@@ -3101,7 +3148,7 @@ export default function StudioOpsERP() {
             <div className="view-fade" key={view}>
               {view === "dashboard" && <Dashboard data={data} setView={setView} />}
               {view === "clients" && <ClientsView data={data} mutate={mutate} />}
-              {view === "projects" && <ProjectsView data={data} mutate={mutate} />}
+              {view === "projects" && <ProjectsView data={data} mutate={mutate} userId={session.user.id} />}
               {view === "tasks" && <TasksView data={data} mutate={mutate} />}
               {view === "time" && <TimeView data={data} mutate={mutate} />}
               {view === "invoices" && <InvoicesView data={data} mutate={mutate} />}
@@ -3684,6 +3731,8 @@ const CSS = `
 .upload-drop span { font-size: 13px; font-weight: 600; }
 .upload-drop em { font-style: normal; font-size: 11px; }
 .file-error { display: flex; align-items: center; gap: 6px; color: var(--red); font-size: 12px; margin: 0; }
+.file-success { display: flex; align-items: center; gap: 6px; color: var(--green); font-size: 12px; margin: 0; }
+.auth-shared-note { display: flex; align-items: center; gap: 6px; text-align: left; }
 .file-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .file-list li {
   display: flex; align-items: center; gap: 10px; padding: 9px 10px; border: 1px solid var(--rule);
