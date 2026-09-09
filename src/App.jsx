@@ -49,6 +49,7 @@ import {
   Instagram,
   Phone,
   MessageCircle,
+  Bell,
 } from "lucide-react";
 import { supabase, FILES_BUCKET } from "./supabaseClient.js";
 import { jsPDF } from "jspdf";
@@ -393,6 +394,45 @@ function MiniBarChart({ data, valueFormat, color = "var(--ink)", height = 140 })
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+function DonutChart({ segments, size = 148, thickness = 20 }) {
+  const total = segments.reduce((s, seg) => s + seg.value, 0) || 1;
+  const r = (size - thickness) / 2;
+  const c = 2 * Math.PI * r;
+  let offset = 0;
+  return (
+    <div className="donut-chart" style={{ width: size, height: size }}>
+      <svg viewBox={`0 0 ${size} ${size}`} width={size} height={size}>
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--paper-dim)" strokeWidth={thickness} />
+        {segments.map((seg, i) => {
+          const frac = seg.value / total;
+          const dash = frac * c;
+          const el = (
+            <circle
+              key={i}
+              cx={size / 2}
+              cy={size / 2}
+              r={r}
+              fill="none"
+              stroke={seg.color}
+              strokeWidth={thickness}
+              strokeDasharray={`${dash} ${c - dash}`}
+              strokeDashoffset={-offset}
+              strokeLinecap="butt"
+              transform={`rotate(-90 ${size / 2} ${size / 2})`}
+            />
+          );
+          offset += dash;
+          return el;
+        })}
+      </svg>
+      <div className="donut-chart-center">
+        <strong>{total}</strong>
+        <span>total</span>
       </div>
     </div>
   );
@@ -1139,6 +1179,7 @@ function Sidebar({ view, setView, counts, onOpenPortal, onOpenSettings, onSignOu
 function Dashboard({ data, setView }) {
   const stats = useMemo(() => {
     const activeProjects = data.projects.filter((p) => p.status !== "completed").length;
+    const completedProjects = data.projects.filter((p) => p.status === "completed").length;
     const openTasks = data.tasks.filter((t) => t.status !== "done").length;
     const overdueTasks = data.tasks.filter((t) => t.status !== "done" && isOverdue(t.dueDate)).length;
     const outstanding = data.invoices
@@ -1147,7 +1188,7 @@ function Dashboard({ data, setView }) {
     const paidThisPeriod = data.invoices
       .filter((i) => i.status === "paid")
       .reduce((sum, i) => sum + i.items.reduce((s, it) => s + it.qty * it.rate, 0), 0);
-    return { activeProjects, openTasks, overdueTasks, outstanding, paidThisPeriod };
+    return { activeProjects, completedProjects, openTasks, overdueTasks, outstanding, paidThisPeriod };
   }, [data]);
 
   const clientName = (id) => data.clients.find((c) => c.id === id)?.company || "—";
@@ -1174,48 +1215,85 @@ function Dashboard({ data, setView }) {
     return months.map((m) => ({ label: monthLabel(m), value: map[m] }));
   }, [data.invoices]);
 
-  // Completed-projects trend uses each project's deadline month as a proxy
-  // for "when it wrapped" — there's no separate completion date tracked yet.
-  const completedByMonth = useMemo(() => {
-    const map = {};
-    months.forEach((m) => (map[m] = 0));
-    data.projects
-      .filter((p) => p.status === "completed")
-      .forEach((p) => {
-        const key = monthKey(p.deadline);
-        if (key in map) map[key] += 1;
-      });
-    return months.map((m) => ({ label: monthLabel(m), value: map[m] }));
+  const projectStatusSegments = useMemo(() => {
+    const byStatus = { active: 0, review: 0, completed: 0, overdue: 0 };
+    data.projects.forEach((p) => {
+      if (p.status === "completed") byStatus.completed += 1;
+      else if (p.deadline && isOverdue(p.deadline)) byStatus.overdue += 1;
+      else if (p.status === "review") byStatus.review += 1;
+      else byStatus.active += 1;
+    });
+    return [
+      { label: "Active", value: byStatus.active, color: "var(--blue)" },
+      { label: "In review", value: byStatus.review, color: "var(--amber)" },
+      { label: "Completed", value: byStatus.completed, color: "var(--green)" },
+      { label: "Overdue", value: byStatus.overdue, color: "var(--red)" },
+    ].filter((s) => s.value > 0);
   }, [data.projects]);
+
+  const topClients = useMemo(() => {
+    const totals = {};
+    data.invoices.forEach((i) => {
+      const total = i.items.reduce((s, it) => s + it.qty * it.rate, 0);
+      totals[i.clientId] = (totals[i.clientId] || 0) + total;
+    });
+    return Object.entries(totals)
+      .map(([clientId, total]) => ({ client: data.clients.find((c) => c.id === clientId), total }))
+      .filter((row) => row.client)
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 5);
+  }, [data.invoices, data.clients]);
+
+  const statCards = [
+    {
+      key: "active",
+      label: "Active projects",
+      value: stats.activeProjects,
+      sub: `of ${data.projects.length} total`,
+      icon: <Briefcase size={17} />,
+      tone: "peach",
+    },
+    {
+      key: "tasks",
+      label: "Open tasks",
+      value: stats.openTasks,
+      sub: `${stats.overdueTasks} overdue`,
+      subWarn: stats.overdueTasks > 0,
+      icon: <CheckSquare size={17} />,
+      tone: "lavender",
+    },
+    {
+      key: "outstanding",
+      label: "Outstanding",
+      value: fmtMoney(stats.outstanding),
+      sub: "across open invoices",
+      icon: <Wallet size={17} />,
+      tone: "rose",
+    },
+    {
+      key: "collected",
+      label: "Collected",
+      value: fmtMoney(stats.paidThisPeriod),
+      sub: "marked paid",
+      icon: <TrendingUp size={17} />,
+      tone: "mint",
+    },
+  ];
 
   return (
     <div className="view">
-      <div className="stat-grid">
-        <div className="stat-card">
-          <span className="stat-label">Active projects</span>
-          <strong className="stat-value">{stats.activeProjects}</strong>
-          <span className="stat-sub">of {data.projects.length} total</span>
-        </div>
-        <div className="stat-card">
-          <span className="stat-label">Open tasks</span>
-          <strong className="stat-value">{stats.openTasks}</strong>
-          <span className={`stat-sub ${stats.overdueTasks ? "stat-sub-warn" : ""}`}>
-            {stats.overdueTasks} overdue
-          </span>
-        </div>
-        <div className="stat-card">
-          <span className="stat-label">Outstanding</span>
-          <strong className="stat-value">{fmtMoney(stats.outstanding)}</strong>
-          <span className="stat-sub">across open invoices</span>
-        </div>
-        <div className="stat-card">
-          <span className="stat-label">Collected</span>
-          <strong className="stat-value">{fmtMoney(stats.paidThisPeriod)}</strong>
-          <span className="stat-sub">marked paid</span>
-        </div>
+      <div className="stat-grid stat-grid-v2">
+        {statCards.map((c) => (
+          <div className={`stat-card-v2 stat-card-${c.tone}`} key={c.key}>
+            <div className="stat-card-v2-icon">{c.icon}</div>
+            <span className="stat-label">{c.label}</span>
+            <strong className="stat-value">{c.value}</strong>
+            <span className={`stat-sub ${c.subWarn ? "stat-sub-warn" : ""}`}>{c.sub}</span>
+          </div>
+        ))}
       </div>
 
-      <div className="panel-grid">
+      <div className="panel-grid panel-grid-uneven">
         <div className="panel">
           <div className="panel-head">
             <h3><TrendingUp size={14} style={{ verticalAlign: "-2px", marginRight: 4 }} /> Monthly revenue</h3>
@@ -1225,10 +1303,25 @@ function Dashboard({ data, setView }) {
         </div>
         <div className="panel">
           <div className="panel-head">
-            <h3><BarChart3 size={14} style={{ verticalAlign: "-2px", marginRight: 4 }} /> Completed projects</h3>
-            <span className="muted-note">last 6 months, by deadline</span>
+            <h3>Project mix</h3>
+            <span className="muted-note">{data.projects.length} total</span>
           </div>
-          <MiniBarChart data={completedByMonth} color="var(--blue)" />
+          {projectStatusSegments.length === 0 ? (
+            <p className="muted-note">No projects yet.</p>
+          ) : (
+            <div className="donut-panel-body">
+              <DonutChart segments={projectStatusSegments} />
+              <ul className="donut-legend">
+                {projectStatusSegments.map((s) => (
+                  <li key={s.label}>
+                    <span className="donut-legend-dot" style={{ background: s.color }} />
+                    <span className="donut-legend-label">{s.label}</span>
+                    <span className="donut-legend-value">{s.value}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1288,6 +1381,33 @@ function Dashboard({ data, setView }) {
             </ul>
           )}
         </div>
+      </div>
+
+      <div className="panel">
+        <div className="panel-head">
+          <h3>Top clients</h3>
+          <button className="link-btn" onClick={() => setView("clients")}>
+            All clients <ChevronRight size={13} />
+          </button>
+        </div>
+        {topClients.length === 0 ? (
+          <p className="muted-note">No invoiced revenue yet.</p>
+        ) : (
+          <ul className="top-client-list">
+            {topClients.map((row, i) => (
+              <li key={row.client.id}>
+                <span className={`top-client-avatar top-client-avatar-${i % 4}`}>
+                  {(row.client.company || "?").slice(0, 1).toUpperCase()}
+                </span>
+                <div className="top-client-info">
+                  <strong>{row.client.company}</strong>
+                  <span>{data.projects.filter((p) => p.clientId === row.client.id).length} project(s)</span>
+                </div>
+                <span className="top-client-total">{fmtMoney(row.total)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
     </div>
   );
@@ -3074,6 +3194,12 @@ export default function StudioOpsERP() {
     );
   }
 
+  const displayName = (session.user.email || "").split("@")[0].replace(/[._-]+/g, " ").trim();
+  const greetingName = displayName ? displayName.charAt(0).toUpperCase() + displayName.slice(1) : "there";
+  const urgentCount =
+    data.tasks.filter((t) => t.status !== "done" && isOverdue(t.dueDate)).length +
+    data.invoices.filter((i) => i.status === "overdue").length;
+
   return (
     <ToastContext.Provider value={pushToast}>
     <TrialContext.Provider value={trial}>
@@ -3109,8 +3235,17 @@ export default function StudioOpsERP() {
                 <Menu size={19} />
               </button>
               <div>
-                <h1>{VIEW_TITLES[view].title}</h1>
-                <p>{VIEW_TITLES[view].sub}</p>
+                {view === "dashboard" ? (
+                  <>
+                    <h1>Welcome, {greetingName} <span className="wave-emoji">👋</span></h1>
+                    <p>Here's what's happening in your studio.</p>
+                  </>
+                ) : (
+                  <>
+                    <h1>{VIEW_TITLES[view].title}</h1>
+                    <p>{VIEW_TITLES[view].sub}</p>
+                  </>
+                )}
               </div>
             </div>
             <div className="topbar-right">
@@ -3118,6 +3253,17 @@ export default function StudioOpsERP() {
                 <Search size={14} />
                 <span>Search…</span>
                 <em>Ctrl K</em>
+              </button>
+              <button
+                className="topbar-icon-btn"
+                onClick={() => setView(urgentCount > 0 ? "tasks" : view)}
+                title={urgentCount > 0 ? `${urgentCount} overdue item(s)` : "No overdue items"}
+              >
+                <Bell size={15} />
+                {urgentCount > 0 && <span className="topbar-icon-badge">{urgentCount > 9 ? "9+" : urgentCount}</span>}
+              </button>
+              <button className="topbar-avatar" onClick={() => setSettingsOpen(true)} title={session.user.email}>
+                {greetingName.charAt(0).toUpperCase()}
               </button>
               <span className="topbar-date">{fmtDate(todayISO())}</span>
             </div>
@@ -3181,7 +3327,7 @@ export default function StudioOpsERP() {
    styles — paper ledger + rubber-stamp system
    ============================================================ */
 const CSS = `
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
 .studio-ops {
   --ink: #16294D;
@@ -3195,13 +3341,20 @@ const CSS = `
   --amber: #D9A441;
   --blue: #2E6FF2;
   --violet: #6B4FA0;
+  --page-bg: #EAE8E4;
+  --sidebar-bg: #FFFFFF;
+  --nav-active-bg: #E3F57E;
+  --nav-active-ink: #45560E;
 
   display: flex;
+  gap: 10px;
   width: 100%;
   min-height: 100vh;
-  background: var(--paper);
+  padding: 10px;
+  box-sizing: border-box;
+  background: var(--page-bg);
   color: var(--ink);
-  font-family: 'Inter', sans-serif;
+  font-family: 'Plus Jakarta Sans', 'Inter', sans-serif;
   font-size: 14px;
   line-height: 1.45;
 }
@@ -3214,11 +3367,11 @@ const CSS = `
 }
 .studio-ops button { font-family: inherit; cursor: pointer; }
 .studio-ops input, .studio-ops select, .studio-ops textarea {
-  font-family: 'Inter', sans-serif;
+  font-family: 'Plus Jakarta Sans', 'Inter', sans-serif;
   font-size: 13px;
   background: var(--paper-raised);
   border: 1.5px solid var(--rule);
-  border-radius: 3px;
+  border-radius: 8px;
   padding: 8px 10px;
   color: var(--ink);
   width: 100%;
@@ -3244,44 +3397,46 @@ const CSS = `
 
 /* sidebar */
 .sidebar {
-  width: 232px; flex-shrink: 0; background: var(--ink); color: var(--paper);
+  width: 232px; flex-shrink: 0; background: var(--sidebar-bg); color: var(--ink);
   display: flex; flex-direction: column; padding: 22px 16px;
-  position: sticky; top: 0; height: 100vh;
+  position: sticky; top: 10px; height: calc(100vh - 20px);
+  border-radius: 24px;
+  box-shadow: 0 1px 2px rgba(20,20,25,0.05);
 }
-.brand { display: flex; align-items: center; gap: 10px; padding: 0 6px 22px; border-bottom: 1px solid rgba(246,245,241,0.14); margin-bottom: 18px; }
+.brand { display: flex; align-items: center; gap: 10px; padding: 0 6px 22px; border-bottom: 1px solid var(--rule); margin-bottom: 18px; }
 .brand-mark {
   width: 34px; height: 34px; border: 2px solid var(--red); border-radius: 6px;
   display: flex; align-items: center; justify-content: center;
   font-family: 'Fraunces', serif; font-weight: 700; font-size: 13px; color: #fff;
-  flex-shrink: 0; overflow: hidden; background: rgba(246,245,241,0.06);
+  flex-shrink: 0; overflow: hidden; background: var(--ink);
 }
-.brand-mark-logo { padding: 3px; }
+.brand-mark-logo { padding: 3px; background: var(--paper-dim); }
 .brand-mark img { width: 100%; height: 100%; object-fit: contain; }
 .brand-word { display: flex; flex-direction: column; line-height: 1.25; }
 .brand-word strong { font-family: 'Fraunces', serif; font-size: 15px; letter-spacing: 0.02em; }
-.brand-word span { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: rgba(246,245,241,0.5); }
+.brand-word span { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
 
 .nav { display: flex; flex-direction: column; gap: 2px; }
 .nav-item {
-  display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 5px;
-  background: transparent; border: none; color: rgba(246,245,241,0.72); text-align: left; font-size: 13px;
+  display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px;
+  background: transparent; border: none; color: var(--muted); text-align: left; font-size: 13.5px;
   font-weight: 500;
 }
 .nav-item span { flex: 1; }
-.nav-item em { font-style: normal; font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: rgba(246,245,241,0.45); }
-.nav-item:hover { background: rgba(246,245,241,0.06); color: #fff; }
-.nav-item-active { background: rgba(196,41,60,0.18); color: #fff; }
-.nav-item-active em { color: var(--red); }
+.nav-item em { font-style: normal; font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--muted); opacity: 0.7; }
+.nav-item:hover { background: var(--paper-dim); color: var(--ink); }
+.nav-item-active { background: var(--nav-active-bg); color: var(--nav-active-ink); font-weight: 600; }
+.nav-item-active em { color: var(--nav-active-ink); opacity: 0.6; }
 
 .sidebar-foot { margin-top: auto; padding-top: 16px; }
 .ticket-mini {
-  border: 1px dashed rgba(246,245,241,0.25); border-radius: 6px; padding: 12px;
+  border: 1px dashed var(--rule); border-radius: 10px; padding: 12px;
 }
 .ticket-mini span { font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.1em; color: var(--red); }
-.ticket-mini p { margin: 6px 0 0; font-size: 11.5px; color: rgba(246,245,241,0.55); line-height: 1.5; }
+.ticket-mini p { margin: 6px 0 0; font-size: 11.5px; color: var(--muted); line-height: 1.5; }
 
 /* main */
-.main { flex: 1; display: flex; flex-direction: column; min-width: 0; height: 100vh; overflow: hidden; }
+.main { flex: 1; display: flex; flex-direction: column; min-width: 0; height: calc(100vh - 20px); overflow: hidden; background: var(--paper-raised); border-radius: 24px; box-shadow: 0 1px 2px rgba(20,20,25,0.05); }
 .topbar {
   display: flex; align-items: flex-end; justify-content: space-between;
   padding: 26px 34px 18px; border-bottom: 1px solid var(--rule); flex-shrink: 0;
@@ -3299,10 +3454,30 @@ const CSS = `
 .topbar-right { display: flex; align-items: center; gap: 14px; }
 .search-trigger {
   display: flex; align-items: center; gap: 7px; background: var(--paper-raised); border: 1.5px solid var(--rule);
-  border-radius: 6px; padding: 7px 10px; color: var(--muted); font-size: 12.5px; transition: border-color 0.15s ease, color 0.15s ease;
+  border-radius: 999px; padding: 7px 12px; color: var(--muted); font-size: 12.5px; transition: border-color 0.15s ease, color 0.15s ease;
 }
 .search-trigger:hover { border-color: var(--ink); color: var(--ink); }
 .search-trigger em { font-style: normal; font-family: 'IBM Plex Mono', monospace; font-size: 10px; border: 1px solid var(--rule); border-radius: 3px; padding: 1px 5px; margin-left: 4px; }
+.wave-emoji { display: inline-block; animation: wave 1.8s ease-in-out infinite; transform-origin: 70% 70%; }
+@keyframes wave { 0%, 60%, 100% { transform: rotate(0deg); } 15% { transform: rotate(14deg); } 30% { transform: rotate(-8deg); } 45% { transform: rotate(10deg); } }
+.topbar-icon-btn {
+  position: relative; display: inline-flex; align-items: center; justify-content: center;
+  width: 36px; height: 36px; border-radius: 50%; border: 1.5px solid var(--rule);
+  background: var(--paper-raised); color: var(--ink); flex-shrink: 0;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.topbar-icon-btn:hover { background: var(--paper-dim); border-color: var(--ink); }
+.topbar-icon-badge {
+  position: absolute; top: -3px; right: -3px; min-width: 15px; height: 15px; padding: 0 3px;
+  border-radius: 999px; background: var(--red); color: #fff; font-size: 9px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; border: 2px solid var(--paper-raised);
+}
+.topbar-avatar {
+  width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0; border: none;
+  background: var(--ink); color: #fff; font-family: 'Fraunces', serif; font-weight: 700; font-size: 14px;
+  display: flex; align-items: center; justify-content: center;
+}
+.topbar-avatar:hover { opacity: 0.88; }
 .conn-warning {
   display: flex; align-items: center; gap: 8px; background: #FCEEEF; color: var(--red);
   border-bottom: 1px solid var(--red); font-size: 12px; padding: 8px 34px; flex-shrink: 0;
@@ -3346,7 +3521,64 @@ const CSS = `
 .stat-sub-warn { color: var(--red); font-weight: 600; }
 
 .panel-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-.panel { background: var(--paper-raised); border: 1px solid var(--rule); border-radius: 8px; padding: 16px 18px; }
+.panel {
+  background: var(--paper-raised); border: 1px solid var(--rule); border-radius: 20px; padding: 18px 20px;
+  box-shadow: 0 10px 24px -20px rgba(22,41,77,0.3);
+  transition: box-shadow 0.18s ease, transform 0.18s ease;
+}
+.panel:hover { box-shadow: 0 14px 30px -18px rgba(22,41,77,0.35); transform: translateY(-1px); }
+
+/* pastel dashboard cards, in the style of a warm SaaS admin UI */
+.stat-grid-v2 { gap: 16px; }
+.stat-card-v2 {
+  border: none; border-radius: 20px; padding: 18px 18px 16px;
+  display: flex; flex-direction: column; gap: 5px; position: relative;
+  box-shadow: 0 10px 24px -18px rgba(22,41,77,0.35);
+  transition: box-shadow 0.18s ease, transform 0.18s ease;
+}
+.stat-card-v2:hover { box-shadow: 0 16px 30px -16px rgba(22,41,77,0.4); transform: translateY(-2px); }
+.stat-card-v2-icon {
+  width: 34px; height: 34px; border-radius: 11px; display: flex; align-items: center; justify-content: center;
+  margin-bottom: 6px;
+}
+.stat-card-peach { background: #FCEEE1; }
+.stat-card-peach .stat-card-v2-icon { background: #F6D9AE; color: #A86315; }
+.stat-card-lavender { background: #ECE7FB; }
+.stat-card-lavender .stat-card-v2-icon { background: #D6CDFA; color: #5541C9; }
+.stat-card-rose { background: #FBE7EA; }
+.stat-card-rose .stat-card-v2-icon { background: #F5CBD3; color: #B23A55; }
+.stat-card-mint { background: #E1F5EC; }
+.stat-card-mint .stat-card-v2-icon { background: #BFE9DD; color: #1C8467; }
+
+.panel-grid-uneven { grid-template-columns: 1.5fr 1fr; }
+
+.donut-panel-body { display: flex; align-items: center; gap: 22px; padding-top: 6px; }
+.donut-chart { position: relative; flex-shrink: 0; }
+.donut-chart-center {
+  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+}
+.donut-chart-center strong { font-family: 'Fraunces', serif; font-size: 22px; line-height: 1; }
+.donut-chart-center span { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.donut-legend { display: flex; flex-direction: column; gap: 10px; flex: 1; min-width: 0; }
+.donut-legend li { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+.donut-legend-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+.donut-legend-label { flex: 1; color: var(--ink); }
+.donut-legend-value { font-weight: 700; }
+
+.top-client-list { display: flex; flex-direction: column; gap: 12px; padding-top: 4px; }
+.top-client-list li { display: flex; align-items: center; gap: 12px; }
+.top-client-avatar {
+  width: 34px; height: 34px; border-radius: 10px; display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 13px; color: #fff; flex-shrink: 0;
+}
+.top-client-avatar-0 { background: var(--blue); }
+.top-client-avatar-1 { background: var(--violet); }
+.top-client-avatar-2 { background: #F0A45E; }
+.top-client-avatar-3 { background: var(--green); }
+.top-client-info { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+.top-client-info strong { font-size: 13px; }
+.top-client-info span { font-size: 11.5px; color: var(--muted); }
+.top-client-total { font-weight: 700; font-size: 13px; }
 .panel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .panel-head h3 { font-size: 15px; }
 .link-btn { background: none; border: none; color: var(--blue); font-size: 12px; display: flex; align-items: center; gap: 2px; font-weight: 500; }
@@ -3371,12 +3603,12 @@ const CSS = `
 
 /* buttons */
 .btn {
-  display: inline-flex; align-items: center; gap: 6px; border-radius: 5px; padding: 8px 14px;
+  display: inline-flex; align-items: center; gap: 6px; border-radius: 12px; padding: 8px 15px;
   font-size: 13px; font-weight: 600; border: 1.5px solid transparent;
-  transition: background 0.15s ease, transform 0.1s ease, border-color 0.15s ease;
+  transition: background 0.15s ease, transform 0.1s ease, border-color 0.15s ease, box-shadow 0.15s ease;
 }
 .btn:active:not(:disabled) { transform: scale(0.97); }
-.btn-primary { background: var(--ink); color: var(--paper); }
+.btn-primary { background: var(--ink); color: var(--paper); box-shadow: 0 8px 18px -10px rgba(22,41,77,0.55); }
 .btn-primary:hover { background: #000; }
 .btn-primary:disabled { background: var(--rule); color: var(--muted); cursor: not-allowed; }
 .btn-ghost { background: transparent; border-color: var(--rule); color: var(--ink); }
@@ -3602,7 +3834,7 @@ const CSS = `
 @keyframes sheetPopIn { from { opacity: 0; transform: scale(0.96) translateY(6px); } to { opacity: 1; transform: scale(1) translateY(0); } }
 
 /* ledger table (invoices) */
-.table-wrap { background: var(--paper-raised); border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; }
+.table-wrap { background: var(--paper-raised); border: 1px solid var(--rule); border-radius: 16px; overflow: hidden; box-shadow: 0 10px 24px -20px rgba(22,41,77,0.3); }
 .ledger { width: 100%; border-collapse: collapse; }
 .ledger th {
   text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted);
@@ -3624,7 +3856,10 @@ const CSS = `
     transform: translateX(-104%); transition: transform 0.22s ease;
     box-shadow: 12px 0 30px rgba(0,0,0,0.18);
     width: 232px;
+    border-radius: 0 20px 20px 0;
   }
+  .main { border-radius: 0; height: 100vh; }
+  .studio-ops { padding: 0; gap: 0; }
   .sidebar-open { transform: translateX(0); }
   .nav-veil { position: fixed; inset: 0; background: rgba(23,24,28,0.45); z-index: 44; }
   .board { grid-template-columns: 1fr; }
@@ -3715,10 +3950,10 @@ const CSS = `
 .portal-code-chip svg:last-child { opacity: 0.5; }
 .portal-entry-btn {
   display: flex; align-items: center; gap: 8px; width: 100%; padding: 9px 10px; margin-bottom: 10px;
-  border-radius: 5px; border: 1px dashed rgba(246,245,241,0.3); background: transparent; color: rgba(246,245,241,0.85);
+  border-radius: 10px; border: 1px dashed var(--rule); background: transparent; color: var(--muted);
   font-size: 12.5px; font-weight: 600;
 }
-.portal-entry-btn:hover { background: rgba(246,245,241,0.08); border-style: solid; }
+.portal-entry-btn:hover { background: var(--paper-dim); border-style: solid; color: var(--ink); }
 
 /* file manager */
 .file-manager { display: flex; flex-direction: column; gap: 12px; }
