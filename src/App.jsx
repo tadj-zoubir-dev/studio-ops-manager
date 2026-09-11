@@ -50,6 +50,8 @@ import {
   Phone,
   MessageCircle,
   Bell,
+  UserPlus,
+  LogIn,
 } from "lucide-react";
 import { supabase, FILES_BUCKET } from "./supabaseClient.js";
 import { jsPDF } from "jspdf";
@@ -929,6 +931,7 @@ function StudioSettingsModal({ settings, onSave, onClose }) {
 function AuthScreen({ onOpenPortal }) {
   const [mode, setMode] = useState("signin"); // "signin" | "signup"
   const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -940,6 +943,7 @@ function AuthScreen({ onOpenPortal }) {
     setError("");
     setNotice("");
     setConfirmPassword("");
+    setPhone("");
   };
 
   const submit = async (e) => {
@@ -951,11 +955,20 @@ function AuthScreen({ onOpenPortal }) {
       setError("Passwords don't match.");
       return;
     }
+    const digitsOnly = phone.replace(/\D/g, "");
+    if (mode === "signup" && digitsOnly && digitsOnly.length < 8) {
+      setError("That phone number looks too short.");
+      return;
+    }
 
     setBusy(true);
     try {
       if (mode === "signup") {
-        const { data: signUpData, error: signUpError } = await supabase.auth.signUp({ email, password });
+        const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+          email,
+          password,
+          options: digitsOnly ? { data: { phone: `+213${digitsOnly}` } } : undefined,
+        });
         if (signUpError) throw signUpError;
         if (signUpData?.session) {
           // Email confirmation is off on this project — signed in immediately.
@@ -964,6 +977,7 @@ function AuthScreen({ onOpenPortal }) {
           setMode("signin");
           setPassword("");
           setConfirmPassword("");
+          setPhone("");
         }
       } else {
         const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
@@ -979,7 +993,7 @@ function AuthScreen({ onOpenPortal }) {
     <div className="portal-shell">
       <div className="portal-gate">
         <div className="portal-badge">
-          <Building size={20} />
+          {mode === "signup" ? <UserPlus size={20} /> : <LogIn size={20} />}
         </div>
         <h1>{mode === "signup" ? "Create your account" : "Sign in"}</h1>
         <p>{mode === "signup" ? "Set up access to the studio dashboard." : "Welcome back to Studio Ops."}</p>
@@ -991,6 +1005,19 @@ function AuthScreen({ onOpenPortal }) {
             <Mail size={14} />
             <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@studio.com" required autoFocus />
           </div>
+          {mode === "signup" && (
+            <div className="auth-input-row auth-phone-row">
+              <Phone size={14} />
+              <span className="auth-phone-prefix">+213</span>
+              <input
+                type="tel"
+                inputMode="numeric"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value.replace(/[^\d\s]/g, ""))}
+                placeholder="555 12 34 56"
+              />
+            </div>
+          )}
           <div className="auth-input-row">
             <Lock size={14} />
             <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" minLength={6} required />
@@ -3538,6 +3565,8 @@ const CSS = `
 .auth-input-row input { border: none; padding: 9px 0; background: transparent; }
 .auth-input-row input:focus { border: none; }
 .auth-input-row:focus-within { border-color: var(--ink); color: var(--ink); }
+.auth-phone-prefix { font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 600; color: var(--ink); flex-shrink: 0; }
+.auth-phone-row input { padding-left: 2px; }
 .auth-notice { display: flex; align-items: center; gap: 6px; color: var(--green); font-size: 12px; margin: 0; }
 
 .main-scroll { flex: 1; overflow-y: auto; padding: 26px 34px 60px; }
