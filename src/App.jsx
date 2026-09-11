@@ -3470,7 +3470,7 @@ const CSS = `
   width: 232px; flex-shrink: 0; background: var(--sidebar-bg); color: var(--ink);
   display: flex; flex-direction: column; padding: 22px 16px;
   position: sticky; top: 10px; height: calc(100vh - 20px);
-  border-radius: 24px;
+  border-radius: 24px; overflow-y: auto; overflow-x: hidden;
   box-shadow: 0 1px 2px rgba(20,20,25,0.05);
 }
 .brand { display: flex; align-items: center; gap: 10px; padding: 0 6px 22px; border-bottom: 1px solid var(--rule); margin-bottom: 18px; }
@@ -3500,7 +3500,7 @@ const CSS = `
 
 .sidebar-foot { margin-top: auto; padding-top: 16px; }
 .ticket-mini {
-  border: 1px dashed var(--rule); border-radius: 10px; padding: 12px;
+  border: 1px dashed var(--rule); border-radius: 10px; padding: 12px; flex-shrink: 0;
 }
 .ticket-mini span { font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.1em; color: var(--red); }
 .ticket-mini p { margin: 6px 0 0; font-size: 11.5px; color: var(--muted); line-height: 1.5; }
