@@ -116,7 +116,7 @@ const emptyData = () => ({
 });
 
 /* ---------- seed content, so the ERP never opens empty ---------- */
-function seedData() {
+function seedData(accountEmail, accountPhone) {
   const c1 = uid("cli");
   const c2 = uid("cli");
   const c3 = uid("cli");
@@ -167,8 +167,8 @@ function seedData() {
       studioName: "Studio Ops",
       tagline: "Creative agency, Algiers",
       address: "14 Rue des Frères Bouadou, Algiers, Algeria",
-      email: "hello@studioops.dz",
-      phone: "+213 21 44 55 66",
+      email: accountEmail || "hello@studioops.dz",
+      phone: accountPhone || "+213 21 44 55 66",
       taxId: "",
       paymentMethod: "Espèces - Virement - CCP",
       invoiceNote: "Nous vous remercions pour votre confiance et restons à votre disposition.",
@@ -187,7 +187,7 @@ function useAuth() {
   return session;
 }
 
-function useStudioData(userId) {
+function useStudioData(userId, accountEmail, accountPhone) {
   const [data, setData] = useState(null);
   const [status, setStatus] = useState("loading"); // loading | ready | error
 
@@ -213,8 +213,9 @@ function useStudioData(userId) {
           });
         } else {
           // First time this account has signed in — give them their own
-          // seeded workspace rather than someone else's data.
-          const seed = seedData();
+          // seeded workspace rather than someone else's data, pre-filled
+          // with the email/phone they signed up with.
+          const seed = seedData(accountEmail, accountPhone);
           setData(seed);
           const { error: insertError } = await supabase.from("erp_state").insert({ id: userId, data: seed });
           if (insertError) console.error("Seed insert failed", insertError);
@@ -223,7 +224,7 @@ function useStudioData(userId) {
       } catch (e) {
         console.error("Loading ERP data failed", e);
         if (!cancelled) {
-          setData(seedData());
+          setData(seedData(accountEmail, accountPhone));
           setStatus("error");
         }
       }
@@ -956,8 +957,8 @@ function AuthScreen({ onOpenPortal }) {
       return;
     }
     const digitsOnly = phone.replace(/\D/g, "");
-    if (mode === "signup" && digitsOnly && digitsOnly.length < 8) {
-      setError("That phone number looks too short.");
+    if (mode === "signup" && digitsOnly.length < 8) {
+      setError("Enter a valid phone number.");
       return;
     }
 
@@ -967,7 +968,7 @@ function AuthScreen({ onOpenPortal }) {
         const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
           email,
           password,
-          options: digitsOnly ? { data: { phone: `+213${digitsOnly}` } } : undefined,
+          options: { data: { phone: `+213${digitsOnly}` } },
         });
         if (signUpError) throw signUpError;
         if (signUpData?.session) {
@@ -1015,6 +1016,7 @@ function AuthScreen({ onOpenPortal }) {
                 value={phone}
                 onChange={(e) => setPhone(e.target.value.replace(/[^\d\s]/g, ""))}
                 placeholder="555 12 34 56"
+                required
               />
             </div>
           )}
@@ -3135,7 +3137,11 @@ const VIEW_TITLES = {
 
 export default function StudioOpsERP() {
   const session = useAuth(); // undefined = loading, null = signed out, object = signed in
-  const [data, rawMutate, dataStatus] = useStudioData(session?.user?.id);
+  const [data, rawMutate, dataStatus] = useStudioData(
+    session?.user?.id,
+    session?.user?.email,
+    session?.user?.user_metadata?.phone
+  );
   const trial = useMemo(() => getTrialInfo(session), [session]);
 
   const [view, setView] = useState("dashboard");
