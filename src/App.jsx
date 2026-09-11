@@ -52,6 +52,7 @@ import {
   Bell,
   UserPlus,
   LogIn,
+  UserCog,
 } from "lucide-react";
 import { supabase, FILES_BUCKET } from "./supabaseClient.js";
 import { jsPDF } from "jspdf";
@@ -111,6 +112,7 @@ const emptyData = () => ({
   invoices: [],
   expenses: [],
   timeEntries: [],
+  employees: [],
   jobCounter: 1001,
   settings: { ...DEFAULT_SETTINGS },
 });
@@ -123,16 +125,24 @@ function seedData(accountEmail, accountPhone) {
   const p1 = uid("prj");
   const p2 = uid("prj");
   const p3 = uid("prj");
+  const e1 = uid("emp");
+  const e2 = uid("emp");
+  const e3 = uid("emp");
   return {
     clients: [
       { id: c1, name: "Amina Belkacem", company: "Sable & Co.", email: "amina@sableco.dz", phone: "+213 555 0142", notes: "Rebrand + packaging retainer.", createdAt: "2026-02-04" },
       { id: c2, name: "Yacine Meziane", company: "Nordine Freight", email: "yacine@nordinefreight.com", phone: "+213 661 2290", notes: "Annual site refresh, invoices net-30.", createdAt: "2026-03-11" },
       { id: c3, name: "Lina Haddad", company: "Atelier Warda", email: "lina@atelierwarda.com", phone: "+213 770 4418", notes: "Small studio, quick-turn social work.", createdAt: "2026-05-22" },
     ],
+    employees: [
+      { id: e1, name: "Nabil", role: "Designer", email: "nabil@studioops.dz", phone: "+213 555 8811", dailyRate: 6000, notes: "Brand & identity lead.", createdAt: "2026-02-10" },
+      { id: e2, name: "Sara", role: "Production", email: "sara@studioops.dz", phone: "+213 555 8822", dailyRate: 5000, notes: "Packaging & campaign production.", createdAt: "2026-02-10" },
+      { id: e3, name: "Yasmine", role: "Web / Reviewer", email: "yasmine@studioops.dz", phone: "+213 555 8833", dailyRate: 5500, notes: "Client review & QA.", createdAt: "2026-03-01" },
+    ],
     projects: [
-      { id: p1, clientId: c1, name: "Sable & Co. Rebrand", status: "active", budget: 480000, deadline: "2026-09-15", description: "Full identity system: mark, type, packaging templates.", portalCode: "SAB-7F2K4" },
-      { id: p2, clientId: c2, name: "Nordine Freight — Site Refresh", status: "review", budget: 260000, deadline: "2026-08-20", description: "12-page marketing site on the existing design system.", portalCode: "NOR-9XQ2M" },
-      { id: p3, clientId: c3, name: "Atelier Warda — Autumn Campaign", status: "planning", budget: 90000, deadline: "2026-08-30", description: "6-piece social campaign, product-led.", portalCode: "ATE-3LR8P" },
+      { id: p1, clientId: c1, name: "Sable & Co. Rebrand", status: "active", budget: 480000, deadline: "2026-09-15", description: "Full identity system: mark, type, packaging templates.", portalCode: "SAB-7F2K4", teamIds: [e1, e2] },
+      { id: p2, clientId: c2, name: "Nordine Freight — Site Refresh", status: "review", budget: 260000, deadline: "2026-08-20", description: "12-page marketing site on the existing design system.", portalCode: "NOR-9XQ2M", teamIds: [e1, e3] },
+      { id: p3, clientId: c3, name: "Atelier Warda — Autumn Campaign", status: "planning", budget: 90000, deadline: "2026-08-30", description: "6-piece social campaign, product-led.", portalCode: "ATE-3LR8P", teamIds: [e2] },
     ],
     tasks: [
       { id: uid("tsk"), projectId: p1, title: "Finalize wordmark options", assignee: "Nabil", status: "in-progress", priority: "high", dueDate: "2026-08-10" },
@@ -209,6 +219,7 @@ function useStudioData(userId, accountEmail, accountPhone) {
             ...row.data,
             expenses: row.data.expenses || [],
             timeEntries: row.data.timeEntries || [],
+            employees: row.data.employees || [],
             settings: { ...DEFAULT_SETTINGS, ...(row.data.settings || {}) },
           });
         } else {
@@ -1055,16 +1066,17 @@ function GlobalSearchModal({ data, onClose, onNavigate }) {
   const clientName = (id) => data.clients.find((c) => c.id === id)?.company || "";
 
   const results = useMemo(() => {
-    if (q.length < 1) return { clients: [], projects: [], tasks: [], invoices: [] };
+    if (q.length < 1) return { clients: [], projects: [], tasks: [], invoices: [], employees: [] };
     return {
       clients: data.clients.filter((c) => `${c.name} ${c.company} ${c.email}`.toLowerCase().includes(q)).slice(0, 6),
       projects: data.projects.filter((p) => `${p.name} ${clientName(p.clientId)}`.toLowerCase().includes(q)).slice(0, 6),
       tasks: data.tasks.filter((t) => t.title.toLowerCase().includes(q)).slice(0, 6),
       invoices: data.invoices.filter((i) => `#${i.number} ${clientName(i.clientId)}`.toLowerCase().includes(q)).slice(0, 6),
+      employees: (data.employees || []).filter((e) => `${e.name} ${e.role}`.toLowerCase().includes(q)).slice(0, 6),
     };
   }, [q, data]);
 
-  const totalResults = results.clients.length + results.projects.length + results.tasks.length + results.invoices.length;
+  const totalResults = results.clients.length + results.projects.length + results.tasks.length + results.invoices.length + results.employees.length;
 
   const go = (view) => {
     onNavigate(view);
@@ -1132,9 +1144,158 @@ function GlobalSearchModal({ data, onClose, onNavigate }) {
                   ))}
                 </div>
               )}
+              {results.employees.length > 0 && (
+                <div className="search-group">
+                  <span className="search-group-label"><UserCog size={12} /> Team</span>
+                  {results.employees.map((e) => (
+                    <button key={e.id} className="search-result-row" onClick={() => go("employees")}>
+                      <span>{e.name}</span><span className="muted-note">{e.role || ""}</span><ArrowRight size={13} />
+                    </button>
+                  ))}
+                </div>
+              )}
             </>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------- notifications ---------------------- */
+// Builds the notification feed: overdue + soon-due tasks, invoices, and
+// project deadlines. `withinDays` controls the "upcoming" window.
+function buildNotifications(data, withinDays = 3) {
+  if (!data) return [];
+  const today = new Date(new Date().toDateString());
+  const horizon = new Date(today);
+  horizon.setDate(horizon.getDate() + withinDays);
+
+  const clientName = (id) => data.clients.find((c) => c.id === id)?.company || data.clients.find((c) => c.id === id)?.name || "";
+  const projectName = (id) => data.projects.find((p) => p.id === id)?.name || "";
+
+  const dateBucket = (iso) => {
+    if (!iso) return null;
+    const d = new Date(iso + "T00:00:00");
+    if (Number.isNaN(d.getTime())) return null;
+    if (d < today) return "overdue";
+    if (d <= horizon) return "soon";
+    return null;
+  };
+
+  const items = [];
+
+  data.tasks.forEach((t) => {
+    if (t.status === "done" || !t.dueDate) return;
+    const bucket = dateBucket(t.dueDate);
+    if (!bucket) return;
+    items.push({
+      id: `task-${t.id}`,
+      kind: "task",
+      severity: bucket === "overdue" ? "urgent" : "soon",
+      icon: CheckSquare,
+      title: t.title,
+      subtitle: projectName(t.projectId) || "Task",
+      date: t.dueDate,
+      message: bucket === "overdue" ? `Overdue since ${fmtDate(t.dueDate)}` : `Due ${fmtDate(t.dueDate)}`,
+      view: "tasks",
+    });
+  });
+
+  data.projects.forEach((p) => {
+    if (!p.deadline || p.status === "done" || p.status === "completed" || p.status === "archived") return;
+    const bucket = dateBucket(p.deadline);
+    if (!bucket) return;
+    items.push({
+      id: `project-${p.id}`,
+      kind: "project",
+      severity: bucket === "overdue" ? "urgent" : "soon",
+      icon: Briefcase,
+      title: p.name,
+      subtitle: clientName(p.clientId) || "Project deadline",
+      date: p.deadline,
+      message: bucket === "overdue" ? `Deadline passed ${fmtDate(p.deadline)}` : `Due ${fmtDate(p.deadline)}`,
+      view: "projects",
+    });
+  });
+
+  data.invoices.forEach((inv) => {
+    if (inv.status === "paid" || inv.status === "void" || !inv.dueDate) return;
+    const bucket = dateBucket(inv.dueDate);
+    if (!bucket) return;
+    const total = (inv.items || []).reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.rate) || 0), 0);
+    items.push({
+      id: `invoice-${inv.id}`,
+      kind: "invoice",
+      severity: bucket === "overdue" ? "urgent" : "soon",
+      icon: Receipt,
+      title: `Invoice #${inv.number}`,
+      subtitle: clientName(inv.clientId) || "Invoice",
+      date: inv.dueDate,
+      message: bucket === "overdue" ? `Payment overdue since ${fmtDate(inv.dueDate)} — ${fmtMoney(total)}` : `Payment due ${fmtDate(inv.dueDate)} — ${fmtMoney(total)}`,
+      view: "invoices",
+    });
+  });
+
+  items.sort((a, b) => {
+    if (a.severity !== b.severity) return a.severity === "urgent" ? -1 : 1;
+    return (a.date || "9999").localeCompare(b.date || "9999");
+  });
+
+  return items;
+}
+
+function NotificationsPanel({ notifications, onNavigate, onClose }) {
+  const urgent = notifications.filter((n) => n.severity === "urgent");
+  const soon = notifications.filter((n) => n.severity === "soon");
+
+  const Row = ({ n }) => {
+    const Icon = n.icon;
+    return (
+      <button
+        className={`notif-row ${n.severity === "urgent" ? "notif-row-urgent" : ""}`}
+        onClick={() => {
+          onNavigate(n.view);
+          onClose();
+        }}
+      >
+        <span className={`notif-row-icon ${n.severity === "urgent" ? "notif-row-icon-urgent" : ""}`}>
+          <Icon size={13} />
+        </span>
+        <span className="notif-row-body">
+          <span className="notif-row-title">{n.title}</span>
+          <span className="notif-row-sub">{n.subtitle}</span>
+          <span className="notif-row-message">{n.message}</span>
+        </span>
+      </button>
+    );
+  };
+
+  return (
+    <div className="notif-panel">
+      <div className="notif-panel-head">
+        <h4>Notifications</h4>
+        <button className="icon-btn" onClick={onClose}><X size={14} /></button>
+      </div>
+      <div className="notif-panel-body">
+        {notifications.length === 0 ? (
+          <p className="muted-note notif-empty">You're all caught up — nothing overdue or due soon.</p>
+        ) : (
+          <>
+            {urgent.length > 0 && (
+              <div className="notif-group">
+                <span className="notif-group-label">Overdue</span>
+                {urgent.map((n) => <Row key={n.id} n={n} />)}
+              </div>
+            )}
+            {soon.length > 0 && (
+              <div className="notif-group">
+                <span className="notif-group-label">Coming up</span>
+                {soon.map((n) => <Row key={n.id} n={n} />)}
+              </div>
+            )}
+          </>
+        )}
       </div>
     </div>
   );
@@ -1146,8 +1307,11 @@ const NAV_ITEMS = [
   { key: "clients", label: "Clients", icon: Users },
   { key: "projects", label: "Projects", icon: Briefcase },
   { key: "tasks", label: "Tasks", icon: CheckSquare },
+  { key: "employees", label: "Team", icon: UserCog },
   { key: "time", label: "Time", icon: Clock3 },
   { key: "invoices", label: "Invoices", icon: Receipt },
+  { key: "finance", label: "Finance", icon: Wallet },
+  { key: "analytics", label: "Analyse", icon: BarChart3 },
 ];
 
 function Sidebar({ view, setView, counts, onOpenPortal, onOpenSettings, onSignOut, navOpen, settings = DEFAULT_SETTINGS }) {
@@ -1598,8 +1762,243 @@ function ClientsView({ data, mutate }) {
   );
 }
 
+/* ---------------------- employees / team ---------------------- */
+function EmployeeForm({ initial, onSave, onCancel }) {
+  const [form, setForm] = useState(
+    initial || { name: "", role: "", email: "", phone: "", dailyRate: "", notes: "" }
+  );
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  const canSave = form.name.trim();
+  return (
+    <form
+      className="form-grid"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (canSave) onSave({ ...form, dailyRate: Number(form.dailyRate) || 0 });
+      }}
+    >
+      <Field label="Name">
+        <input value={form.name} onChange={set("name")} placeholder="Nabil" required />
+      </Field>
+      <Field label="Role">
+        <input value={form.role} onChange={set("role")} placeholder="Designer" />
+      </Field>
+      <div className="field-row">
+        <Field label="Email">
+          <input type="email" value={form.email} onChange={set("email")} placeholder="name@studio.dz" />
+        </Field>
+        <Field label="Phone">
+          <input value={form.phone} onChange={set("phone")} placeholder="+213 5xx xxx xxx" />
+        </Field>
+      </div>
+      <Field label="Daily rate (DZD)">
+        <input type="number" min="0" value={form.dailyRate} onChange={set("dailyRate")} placeholder="6000" />
+      </Field>
+      <Field label="Notes">
+        <textarea rows={3} value={form.notes} onChange={set("notes")} placeholder="Specialty, availability, quirks…" />
+      </Field>
+      <div className="form-actions">
+        <button type="button" className="btn btn-ghost" onClick={onCancel}>Cancel</button>
+        <button type="submit" className="btn btn-primary" disabled={!canSave}>Save team member</button>
+      </div>
+    </form>
+  );
+}
+
+function EmployeeWorkloadModal({ employee, data, onClose }) {
+  const projects = data.projects.filter((p) => (p.teamIds || []).includes(employee.id));
+  const tasks = data.tasks.filter((t) => t.assignee === employee.name);
+  const openTasks = tasks.filter((t) => t.status !== "done");
+  const doneTasks = tasks.filter((t) => t.status === "done");
+  const projectName = (id) => data.projects.find((p) => p.id === id)?.name || "—";
+
+  return (
+    <Modal title={`Workload — ${employee.name}`} onClose={onClose} wide>
+      <div className="expense-summary">
+        <div>
+          <span className="field-label">Projects</span>
+          <strong>{projects.length}</strong>
+        </div>
+        <div>
+          <span className="field-label">Open tasks</span>
+          <strong className={openTasks.some((t) => isOverdue(t.dueDate)) ? "amount-warn" : ""}>{openTasks.length}</strong>
+        </div>
+        <div>
+          <span className="field-label">Completed tasks</span>
+          <strong className="amount-good">{doneTasks.length}</strong>
+        </div>
+      </div>
+
+      <h4 className="modal-section-title">Assigned projects</h4>
+      {projects.length === 0 ? (
+        <p className="muted-note">Not assigned to any project yet.</p>
+      ) : (
+        <ul className="mini-list">
+          {projects.map((p) => (
+            <li key={p.id}>
+              <div>
+                <strong>{p.name}</strong>
+                <span>{fmtDate(p.deadline)}</span>
+              </div>
+              <Stamp label={PROJECT_STATUS[p.status]?.label || p.status} color={PROJECT_STATUS[p.status]?.color} size="sm" />
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <h4 className="modal-section-title">Assigned tasks</h4>
+      {tasks.length === 0 ? (
+        <p className="muted-note">No tasks assigned by this name yet.</p>
+      ) : (
+        <ul className="mini-list">
+          {tasks.map((t) => (
+            <li key={t.id}>
+              <div>
+                <strong>{t.title}</strong>
+                <span>{projectName(t.projectId)}</span>
+              </div>
+              <Stamp
+                label={t.status === "done" ? "Done" : fmtDate(t.dueDate)}
+                color={t.status === "done" ? "var(--green)" : isOverdue(t.dueDate) ? "var(--red)" : "var(--muted)"}
+                size="sm"
+              />
+            </li>
+          ))}
+        </ul>
+      )}
+    </Modal>
+  );
+}
+
+function EmployeesView({ data, mutate }) {
+  const [query, setQuery] = useState("");
+  const [modal, setModal] = useState(null); // { mode: 'new'|'edit', employee }
+  const [confirmId, setConfirmId] = useState(null);
+  const [workloadFor, setWorkloadFor] = useState(null);
+  const toast = useToast();
+  const { readOnly } = useTrial();
+
+  const projectCount = (empId) => data.projects.filter((p) => (p.teamIds || []).includes(empId)).length;
+  const openTaskCount = (name) => data.tasks.filter((t) => t.assignee === name && t.status !== "done").length;
+
+  const filtered = data.employees.filter((e) =>
+    `${e.name} ${e.role} ${e.email}`.toLowerCase().includes(query.toLowerCase())
+  );
+
+  const saveEmployee = (form) => {
+    if (readOnly) return;
+    if (modal.mode === "edit") {
+      mutate({
+        ...data,
+        employees: data.employees.map((e) => (e.id === modal.employee.id ? { ...e, ...form } : e)),
+      });
+      toast(`${form.name} updated`);
+    } else {
+      mutate({
+        ...data,
+        employees: [...data.employees, { id: uid("emp"), createdAt: todayISO(), ...form }],
+      });
+      toast(`${form.name} added`);
+    }
+    setModal(null);
+  };
+
+  const deleteEmployee = (id) => {
+    if (readOnly) return;
+    const e = data.employees.find((x) => x.id === id);
+    mutate({
+      ...data,
+      employees: data.employees.filter((x) => x.id !== id),
+      projects: data.projects.map((p) => ({ ...p, teamIds: (p.teamIds || []).filter((tid) => tid !== id) })),
+    });
+    setConfirmId(null);
+    toast(`${e?.name || "Team member"} removed`);
+  };
+
+  return (
+    <div className="view">
+      <div className="toolbar">
+        <div className="search-box">
+          <Search size={14} />
+          <input placeholder="Search team…" value={query} onChange={(e) => setQuery(e.target.value)} />
+        </div>
+        <button className="btn btn-primary" onClick={() => setModal({ mode: "new" })} disabled={readOnly} title={readOnly ? "Read-only — trial has ended" : undefined}>
+          <Plus size={15} /> New team member
+        </button>
+      </div>
+
+      {filtered.length === 0 ? (
+        <EmptyState
+          icon={UserCog}
+          title={data.employees.length ? "No matches" : "No team members yet"}
+          hint={data.employees.length ? "Try a different search." : "Add the people doing the work so you can track who's assigned to what."}
+          actionLabel={data.employees.length || readOnly ? null : "New team member"}
+          onAction={() => setModal({ mode: "new" })}
+        />
+      ) : (
+        <div className="ticket-grid">
+          {filtered.map((e) => (
+            <div className="ticket" key={e.id}>
+              <div className="ticket-top">
+                <span className="ticket-id">EMP-{e.id.slice(-5).toUpperCase()}</span>
+                <Stamp label={`${projectCount(e.id)} projects`} color="var(--blue)" size="sm" />
+              </div>
+              <div className="ticket-body">
+                <div className="ticket-icon"><UserCog size={16} /></div>
+                <h4>{e.name}</h4>
+                <p className="ticket-sub">{e.role || "—"}</p>
+                {e.email && <p className="ticket-line">{e.email}</p>}
+                {e.phone && <p className="ticket-line">{e.phone}</p>}
+                {e.dailyRate > 0 && <p className="ticket-line">{fmtMoney(e.dailyRate)} / day</p>}
+                {e.notes && <p className="ticket-notes">{e.notes}</p>}
+              </div>
+              <div className="ticket-foot">
+                <span className={openTaskCount(e.name) ? "amount-warn" : "amount-quiet"}>
+                  {openTaskCount(e.name) ? `${openTaskCount(e.name)} open task(s)` : "No open tasks"}
+                </span>
+                <div className="ticket-actions">
+                  <button className="icon-btn" onClick={() => setWorkloadFor(e)} title="View workload">
+                    <Eye size={14} />
+                  </button>
+                  <button className="icon-btn" onClick={() => setModal({ mode: "edit", employee: e })} disabled={readOnly} title={readOnly ? "Read-only — trial has ended" : undefined}>
+                    <Pencil size={14} />
+                  </button>
+                  <button className="icon-btn icon-btn-danger" onClick={() => setConfirmId(e.id)} disabled={readOnly} title={readOnly ? "Read-only — trial has ended" : undefined}>
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              </div>
+              {confirmId === e.id && (
+                <ConfirmDelete
+                  label={e.name}
+                  onConfirm={() => deleteEmployee(e.id)}
+                  onCancel={() => setConfirmId(null)}
+                />
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {modal && (
+        <Modal title={modal.mode === "edit" ? "Edit team member" : "New team member"} onClose={() => setModal(null)}>
+          <EmployeeForm
+            initial={modal.employee}
+            onSave={saveEmployee}
+            onCancel={() => setModal(null)}
+          />
+        </Modal>
+      )}
+
+      {workloadFor && (
+        <EmployeeWorkloadModal employee={workloadFor} data={data} onClose={() => setWorkloadFor(null)} />
+      )}
+    </div>
+  );
+}
+
 /* ---------------------- projects ---------------------- */
-function ProjectForm({ initial, clients, onSave, onCancel }) {
+function ProjectForm({ initial, clients, employees, onSave, onCancel }) {
   const [form, setForm] = useState(
     initial || {
       clientId: clients[0]?.id || "",
@@ -1609,9 +2008,15 @@ function ProjectForm({ initial, clients, onSave, onCancel }) {
       deadline: "",
       description: "",
       portalCode: generatePortalCode(clients[0]?.company),
+      teamIds: [],
     }
   );
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  const toggleTeamId = (id) =>
+    setForm((f) => {
+      const cur = f.teamIds || [];
+      return { ...f, teamIds: cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id] };
+    });
   const canSave = form.name.trim() && form.clientId;
   const clientCompany = clients.find((c) => c.id === form.clientId)?.company;
   return (
@@ -1619,7 +2024,7 @@ function ProjectForm({ initial, clients, onSave, onCancel }) {
       className="form-grid"
       onSubmit={(e) => {
         e.preventDefault();
-        if (canSave) onSave({ ...form, budget: Number(form.budget) || 0 });
+        if (canSave) onSave({ ...form, budget: Number(form.budget) || 0, teamIds: form.teamIds || [] });
       }}
     >
       <Field label="Project name">
@@ -1661,6 +2066,22 @@ function ProjectForm({ initial, clients, onSave, onCancel }) {
       <Field label="Budget (DZD)">
         <input type="number" min="0" value={form.budget} onChange={set("budget")} placeholder="480000" />
       </Field>
+      {employees && employees.length > 0 && (
+        <Field label="Team members">
+          <div className="team-picker">
+            {employees.map((emp) => (
+              <label key={emp.id} className="team-picker-chip">
+                <input
+                  type="checkbox"
+                  checked={(form.teamIds || []).includes(emp.id)}
+                  onChange={() => toggleTeamId(emp.id)}
+                />
+                <span>{emp.name}</span>
+              </label>
+            ))}
+          </div>
+        </Field>
+      )}
       <Field label="Description">
         <textarea rows={3} value={form.description} onChange={set("description")} placeholder="Scope, deliverables, phases…" />
       </Field>
@@ -1778,6 +2199,11 @@ function ProjectsView({ data, mutate, userId }) {
                     <span>Budget: {fmtMoney(p.budget)}</span>
                     <span>Due: {fmtDate(p.deadline)}</span>
                   </div>
+                  {(p.teamIds || []).length > 0 && (
+                    <div className="ticket-meta-row">
+                      <span>Team: {p.teamIds.map((id) => data.employees.find((e) => e.id === id)?.name).filter(Boolean).join(", ")}</span>
+                    </div>
+                  )}
                   {prog && (
                     <div className="progress-track">
                       <div className="progress-fill" style={{ width: `${(prog.done / prog.total) * 100}%` }} />
@@ -1842,6 +2268,7 @@ function ProjectsView({ data, mutate, userId }) {
           <ProjectForm
             initial={modal.project}
             clients={data.clients}
+            employees={data.employees}
             onSave={saveProject}
             onCancel={() => setModal(null)}
           />
@@ -1852,7 +2279,7 @@ function ProjectsView({ data, mutate, userId }) {
 }
 
 /* ---------------------- tasks ---------------------- */
-function TaskForm({ initial, projects, onSave, onCancel }) {
+function TaskForm({ initial, projects, employees, onSave, onCancel }) {
   const [form, setForm] = useState(
     initial || {
       projectId: projects[0]?.id || "",
@@ -1886,7 +2313,17 @@ function TaskForm({ initial, projects, onSave, onCancel }) {
       </Field>
       <div className="field-row">
         <Field label="Assignee">
-          <input value={form.assignee} onChange={set("assignee")} placeholder="Sara" />
+          <input
+            value={form.assignee}
+            onChange={set("assignee")}
+            placeholder="Sara"
+            list="employee-names-list"
+          />
+          {employees && employees.length > 0 && (
+            <datalist id="employee-names-list">
+              {employees.map((e) => <option key={e.id} value={e.name} />)}
+            </datalist>
+          )}
         </Field>
         <Field label="Due date">
           <input type="date" value={form.dueDate} onChange={set("dueDate")} />
@@ -2300,7 +2737,7 @@ function TasksView({ data, mutate }) {
 
       {modal && (
         <Modal title={modal.mode === "edit" ? "Edit task" : "New task"} onClose={() => setModal(null)}>
-          <TaskForm initial={modal.task} projects={data.projects} onSave={saveTask} onCancel={() => setModal(null)} />
+          <TaskForm initial={modal.task} projects={data.projects} employees={data.employees} onSave={saveTask} onCancel={() => setModal(null)} />
         </Modal>
       )}
     </div>
@@ -2967,6 +3404,408 @@ function InvoicesView({ data, mutate }) {
   );
 }
 
+/* ---------------------- finance ----------------------
+   A studio-wide money view: income (from invoices) vs. expenses
+   (already tracked per-project via ExpenseManager, plus general
+   overhead expenses with no projectId). */
+function ExpenseQuickForm({ projects, onSave, onCancel }) {
+  const [form, setForm] = useState({ description: "", amount: "", date: todayISO(), category: "", projectId: "" });
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  const canSave = form.description.trim() && form.amount;
+  return (
+    <form
+      className="form-grid"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (canSave) onSave({ ...form, amount: Number(form.amount) || 0, projectId: form.projectId || null });
+      }}
+    >
+      <Field label="Description">
+        <input value={form.description} onChange={set("description")} placeholder="Office rent — September" required />
+      </Field>
+      <div className="field-row">
+        <Field label="Amount (DZD)">
+          <input type="number" min="0" value={form.amount} onChange={set("amount")} placeholder="15000" required />
+        </Field>
+        <Field label="Date">
+          <input type="date" value={form.date} onChange={set("date")} />
+        </Field>
+      </div>
+      <div className="field-row">
+        <Field label="Category">
+          <input value={form.category} onChange={set("category")} placeholder="Overhead" />
+        </Field>
+        <Field label="Project (optional)">
+          <select value={form.projectId} onChange={set("projectId")}>
+            <option value="">Studio overhead (no project)</option>
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        </Field>
+      </div>
+      <div className="form-actions">
+        <button type="button" className="btn btn-ghost" onClick={onCancel}>Cancel</button>
+        <button type="submit" className="btn btn-primary" disabled={!canSave}>Add expense</button>
+      </div>
+    </form>
+  );
+}
+
+function FinanceView({ data, mutate }) {
+  const [modal, setModal] = useState(false);
+  const [confirmId, setConfirmId] = useState(null);
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const toast = useToast();
+  const { readOnly: locked } = useTrial();
+
+  const projectName = (id) => data.projects.find((p) => p.id === id)?.name || "Studio overhead";
+  const invoiceTotal = (i) => i.items.reduce((s, it) => s + it.qty * it.rate, 0);
+
+  const totals = useMemo(() => {
+    const invoiced = data.invoices.reduce((s, i) => s + invoiceTotal(i), 0);
+    const collected = data.invoices.filter((i) => i.status === "paid").reduce((s, i) => s + invoiceTotal(i), 0);
+    const sentInvoices = data.invoices.filter((i) => i.status === "sent");
+    const outstanding = sentInvoices.reduce((s, i) => s + invoiceTotal(i), 0);
+    const overdueInvoices = sentInvoices.filter((i) => isOverdue(i.dueDate));
+    const overdueAmount = overdueInvoices.reduce((s, i) => s + invoiceTotal(i), 0);
+    const totalExpenses = data.expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
+    const netProfit = collected - totalExpenses;
+    return { invoiced, collected, outstanding, overdueAmount, overdueCount: overdueInvoices.length, totalExpenses, netProfit };
+  }, [data.invoices, data.expenses]);
+
+  const months = lastMonths(6);
+  const incomeByMonth = useMemo(() => {
+    const map = {};
+    months.forEach((m) => (map[m] = 0));
+    data.invoices.filter((i) => i.status === "paid").forEach((i) => {
+      const key = monthKey(i.issueDate);
+      if (key in map) map[key] += invoiceTotal(i);
+    });
+    return months.map((m) => ({ label: monthLabel(m), value: map[m] }));
+  }, [data.invoices]);
+
+  const expensesByMonth = useMemo(() => {
+    const map = {};
+    months.forEach((m) => (map[m] = 0));
+    data.expenses.forEach((e) => {
+      const key = monthKey(e.date);
+      if (key in map) map[key] += Number(e.amount) || 0;
+    });
+    return months.map((m) => ({ label: monthLabel(m), value: map[m] }));
+  }, [data.expenses]);
+
+  const categories = useMemo(
+    () => ["all", ...new Set(data.expenses.map((e) => e.category).filter(Boolean))],
+    [data.expenses]
+  );
+
+  const visibleExpenses = [...data.expenses]
+    .filter((e) => categoryFilter === "all" || e.category === categoryFilter)
+    .sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+
+  const addExpense = (form) => {
+    if (locked) return;
+    mutate({ ...data, expenses: [...data.expenses, { id: uid("exp"), ...form }] });
+    toast(`${form.description} added`);
+    setModal(false);
+  };
+
+  const deleteExpense = (id) => {
+    if (locked) return;
+    const e = data.expenses.find((x) => x.id === id);
+    mutate({ ...data, expenses: data.expenses.filter((x) => x.id !== id) });
+    setConfirmId(null);
+    toast(`${e?.description || "Expense"} removed`);
+  };
+
+  const statCards = [
+    { key: "invoiced", label: "Total invoiced", value: fmtMoney(totals.invoiced), icon: <Receipt size={17} />, tone: "lavender" },
+    { key: "collected", label: "Collected", value: fmtMoney(totals.collected), icon: <TrendingUp size={17} />, tone: "mint" },
+    {
+      key: "outstanding",
+      label: "Outstanding",
+      value: fmtMoney(totals.outstanding),
+      sub: totals.overdueCount > 0 ? `${fmtMoney(totals.overdueAmount)} overdue (${totals.overdueCount})` : "all current",
+      subWarn: totals.overdueCount > 0,
+      icon: <Clock size={17} />,
+      tone: "peach",
+    },
+    { key: "expenses", label: "Total expenses", value: fmtMoney(totals.totalExpenses), icon: <Wallet size={17} />, tone: "rose" },
+  ];
+
+  return (
+    <div className="view">
+      {locked && (
+        <p className="muted-note inline-warn"><Lock size={12} /> Read-only — your 7-day trial has ended.</p>
+      )}
+
+      <div className="stat-grid stat-grid-v2">
+        {statCards.map((c) => (
+          <div className={`stat-card-v2 stat-card-${c.tone}`} key={c.key}>
+            <div className="stat-card-v2-icon">{c.icon}</div>
+            <span className="stat-label">{c.label}</span>
+            <strong className="stat-value">{c.value}</strong>
+            {c.sub && <span className={`stat-sub ${c.subWarn ? "stat-sub-warn" : ""}`}>{c.sub}</span>}
+          </div>
+        ))}
+      </div>
+
+      <div className="panel">
+        <div className="panel-head">
+          <h3>Net profit</h3>
+          <span className="muted-note">collected minus expenses, all-time</span>
+        </div>
+        <strong className={`finance-net-figure ${totals.netProfit >= 0 ? "amount-good" : "amount-warn"}`}>
+          {fmtMoney(totals.netProfit)}
+        </strong>
+      </div>
+
+      <div className="panel-grid">
+        <div className="panel">
+          <div className="panel-head">
+            <h3>Income by month</h3>
+            <span className="muted-note">last 6 months, paid invoices</span>
+          </div>
+          <MiniBarChart data={incomeByMonth} color="var(--green)" valueFormat={(v) => (v >= 1000 ? `${Math.round(v / 1000)}k` : v)} />
+        </div>
+        <div className="panel">
+          <div className="panel-head">
+            <h3>Expenses by month</h3>
+            <span className="muted-note">last 6 months</span>
+          </div>
+          <MiniBarChart data={expensesByMonth} color="var(--red)" valueFormat={(v) => (v >= 1000 ? `${Math.round(v / 1000)}k` : v)} />
+        </div>
+      </div>
+
+      <div className="toolbar">
+        <select className="filter-select" value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
+          {categories.map((c) => (
+            <option key={c} value={c}>{c === "all" ? "All categories" : c}</option>
+          ))}
+        </select>
+        <button className="btn btn-primary" onClick={() => setModal(true)} disabled={locked} title={locked ? "Read-only — trial has ended" : undefined}>
+          <Plus size={15} /> New expense
+        </button>
+      </div>
+
+      {visibleExpenses.length === 0 ? (
+        <EmptyState
+          icon={Wallet}
+          title={data.expenses.length ? "No matches" : "No expenses logged yet"}
+          hint={data.expenses.length ? "Try a different category." : "Log studio overhead or project costs to track real profit."}
+          actionLabel={data.expenses.length || locked ? null : "New expense"}
+          onAction={() => setModal(true)}
+        />
+      ) : (
+        <div className="panel">
+          <ul className="file-list">
+            {visibleExpenses.map((e) => (
+              <li key={e.id}>
+                <Wallet size={15} />
+                <div className="file-list-info">
+                  <strong>{e.description}</strong>
+                  <span>{fmtMoney(e.amount)} · {fmtDate(e.date)} · {projectName(e.projectId)}{e.category ? ` · ${e.category}` : ""}</span>
+                </div>
+                {!locked && (
+                  <button className="icon-btn icon-btn-danger" onClick={() => setConfirmId(e.id)} title="Delete">
+                    <Trash2 size={14} />
+                  </button>
+                )}
+                {confirmId === e.id && (
+                  <div className="confirm-floating">
+                    <ConfirmDelete label={e.description} onConfirm={() => deleteExpense(e.id)} onCancel={() => setConfirmId(null)} />
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {modal && (
+        <Modal title="New expense" onClose={() => setModal(false)}>
+          <ExpenseQuickForm projects={data.projects} onSave={addExpense} onCancel={() => setModal(false)} />
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+/* ---------------------- analytics ---------------------- */
+function AnalyticsView({ data }) {
+  const invoiceTotal = (i) => i.items.reduce((s, it) => s + it.qty * it.rate, 0);
+
+  const months = lastMonths(6);
+  const revenueByMonth = useMemo(() => {
+    const map = {};
+    months.forEach((m) => (map[m] = 0));
+    data.invoices.filter((i) => i.status === "paid").forEach((i) => {
+      const key = monthKey(i.issueDate);
+      if (key in map) map[key] += invoiceTotal(i);
+    });
+    return months.map((m) => ({ label: monthLabel(m), value: map[m] }));
+  }, [data.invoices]);
+
+  const taskStatusSegments = useMemo(() => {
+    const byStatus = {};
+    data.tasks.forEach((t) => { byStatus[t.status] = (byStatus[t.status] || 0) + 1; });
+    const palette = { todo: "var(--muted)", "in-progress": "var(--blue)", review: "var(--amber)", done: "var(--green)" };
+    return Object.entries(byStatus)
+      .map(([k, v]) => ({ label: TASK_STATUS[k]?.label || k, value: v, color: palette[k] || "var(--ink)" }))
+      .filter((s) => s.value > 0);
+  }, [data.tasks]);
+
+  const projectStatusSegments = useMemo(() => {
+    const byStatus = { active: 0, review: 0, completed: 0, overdue: 0 };
+    data.projects.forEach((p) => {
+      if (p.status === "completed") byStatus.completed += 1;
+      else if (p.deadline && isOverdue(p.deadline)) byStatus.overdue += 1;
+      else if (p.status === "review") byStatus.review += 1;
+      else byStatus.active += 1;
+    });
+    return [
+      { label: "Active", value: byStatus.active, color: "var(--blue)" },
+      { label: "In review", value: byStatus.review, color: "var(--amber)" },
+      { label: "Completed", value: byStatus.completed, color: "var(--green)" },
+      { label: "Overdue", value: byStatus.overdue, color: "var(--red)" },
+    ].filter((s) => s.value > 0);
+  }, [data.projects]);
+
+  const topClients = useMemo(() => {
+    const totals = {};
+    data.invoices.forEach((i) => { totals[i.clientId] = (totals[i.clientId] || 0) + invoiceTotal(i); });
+    return Object.entries(totals)
+      .map(([clientId, total]) => ({ client: data.clients.find((c) => c.id === clientId), total }))
+      .filter((row) => row.client)
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 5);
+  }, [data.invoices, data.clients]);
+
+  const employeeStats = useMemo(() => {
+    return data.employees
+      .map((e) => {
+        const tasks = data.tasks.filter((t) => t.assignee === e.name);
+        const done = tasks.filter((t) => t.status === "done").length;
+        const open = tasks.filter((t) => t.status !== "done").length;
+        const overdue = tasks.filter((t) => t.status !== "done" && isOverdue(t.dueDate)).length;
+        const projects = data.projects.filter((p) => (p.teamIds || []).includes(e.id)).length;
+        return { employee: e, done, open, overdue, projects, total: tasks.length };
+      })
+      .sort((a, b) => b.done - a.done);
+  }, [data.employees, data.tasks, data.projects]);
+
+  const maxDone = Math.max(1, ...employeeStats.map((s) => s.done));
+
+  return (
+    <div className="view">
+      <div className="panel">
+        <div className="panel-head">
+          <h3><TrendingUp size={14} style={{ verticalAlign: "-2px", marginRight: 4 }} /> Revenue trend</h3>
+          <span className="muted-note">last 6 months, paid invoices</span>
+        </div>
+        <MiniBarChart data={revenueByMonth} color="var(--green)" valueFormat={(v) => (v >= 1000 ? `${Math.round(v / 1000)}k` : v)} />
+      </div>
+
+      <div className="panel-grid">
+        <div className="panel">
+          <div className="panel-head">
+            <h3>Project mix</h3>
+            <span className="muted-note">{data.projects.length} total</span>
+          </div>
+          {projectStatusSegments.length === 0 ? (
+            <p className="muted-note">No projects yet.</p>
+          ) : (
+            <div className="donut-panel-body">
+              <DonutChart segments={projectStatusSegments} />
+              <ul className="donut-legend">
+                {projectStatusSegments.map((s) => (
+                  <li key={s.label}>
+                    <span className="donut-legend-dot" style={{ background: s.color }} />
+                    <span className="donut-legend-label">{s.label}</span>
+                    <span className="donut-legend-value">{s.value}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+        <div className="panel">
+          <div className="panel-head">
+            <h3>Task mix</h3>
+            <span className="muted-note">{data.tasks.length} total</span>
+          </div>
+          {taskStatusSegments.length === 0 ? (
+            <p className="muted-note">No tasks yet.</p>
+          ) : (
+            <div className="donut-panel-body">
+              <DonutChart segments={taskStatusSegments} />
+              <ul className="donut-legend">
+                {taskStatusSegments.map((s) => (
+                  <li key={s.label}>
+                    <span className="donut-legend-dot" style={{ background: s.color }} />
+                    <span className="donut-legend-label">{s.label}</span>
+                    <span className="donut-legend-value">{s.value}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="panel">
+        <div className="panel-head">
+          <h3>Team performance</h3>
+          <span className="muted-note">tasks completed by assignee</span>
+        </div>
+        {employeeStats.length === 0 ? (
+          <p className="muted-note">Add team members to see performance here.</p>
+        ) : (
+          <ul className="team-perf-list">
+            {employeeStats.map((s) => (
+              <li key={s.employee.id}>
+                <div className="team-perf-head">
+                  <strong>{s.employee.name}</strong>
+                  <span className="muted-note">{s.projects} project(s) · {s.overdue > 0 ? `${s.overdue} overdue` : "on track"}</span>
+                </div>
+                <div className="progress-track">
+                  <div className="progress-fill" style={{ width: `${(s.done / maxDone) * 100}%`, background: "var(--green)" }} />
+                  <span>{s.done} done · {s.open} open</span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <div className="panel">
+        <div className="panel-head">
+          <h3>Top clients by revenue</h3>
+        </div>
+        {topClients.length === 0 ? (
+          <p className="muted-note">No invoiced revenue yet.</p>
+        ) : (
+          <ul className="top-client-list">
+            {topClients.map((row, i) => (
+              <li key={row.client.id}>
+                <span className={`top-client-avatar top-client-avatar-${i % 4}`}>
+                  {(row.client.company || "?").slice(0, 1).toUpperCase()}
+                </span>
+                <div className="top-client-info">
+                  <strong>{row.client.company}</strong>
+                  <span>{data.projects.filter((p) => p.clientId === row.client.id).length} project(s)</span>
+                </div>
+                <span className="top-client-total">{fmtMoney(row.total)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ---------------------- client portal ----------------------
    A code-gated, read-only view. The code is per-project (see
    Projects → Files/portal chip), not a real authentication
@@ -3127,8 +3966,11 @@ const VIEW_TITLES = {
   clients: { title: "Clients", sub: "Every account on the books" },
   projects: { title: "Projects", sub: "Active and past job tickets" },
   tasks: { title: "Tasks", sub: "Work in motion across projects" },
+  employees: { title: "Team", sub: "Who's working on what" },
   time: { title: "Time", sub: "Hours logged by project, week by week" },
   invoices: { title: "Invoices", sub: "Billing and collections" },
+  finance: { title: "Finance", sub: "Income, expenses, and profit" },
+  analytics: { title: "Analyse", sub: "Performance across the studio" },
 };
 
 export default function StudioOpsERP() {
@@ -3148,6 +3990,8 @@ export default function StudioOpsERP() {
   const [navOpen, setNavOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const notifRef = useRef(null);
 
   const pushToast = useCallback((message, type = "success", opts = {}) => {
     const id = uid("toast");
@@ -3173,6 +4017,7 @@ export default function StudioOpsERP() {
       clients: data.clients.length,
       projects: data.projects.length,
       tasks: data.tasks.filter((t) => t.status !== "done").length,
+      employees: data.employees.length,
       invoices: data.invoices.length,
     };
   }, [data]);
@@ -3192,6 +4037,22 @@ export default function StudioOpsERP() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  useEffect(() => {
+    if (!notifOpen) return;
+    const onClickOutside = (e) => {
+      if (notifRef.current && !notifRef.current.contains(e.target)) setNotifOpen(false);
+    };
+    const onKey = (e) => e.key === "Escape" && setNotifOpen(false);
+    document.addEventListener("mousedown", onClickOutside);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onClickOutside);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [notifOpen]);
+
+  const notifications = useMemo(() => buildNotifications(data), [data]);
 
   // Portal routes are public and must work whether or not anyone is signed
   // in on this device, so they're checked before the auth gate below.
@@ -3262,9 +4123,7 @@ export default function StudioOpsERP() {
 
   const displayName = (session.user.email || "").split("@")[0].replace(/[._-]+/g, " ").trim();
   const greetingName = displayName ? displayName.charAt(0).toUpperCase() + displayName.slice(1) : "there";
-  const urgentCount =
-    data.tasks.filter((t) => t.status !== "done" && isOverdue(t.dueDate)).length +
-    data.invoices.filter((i) => i.status === "overdue").length;
+  const urgentNotifCount = notifications.filter((n) => n.severity === "urgent").length;
 
   return (
     <ToastContext.Provider value={pushToast}>
@@ -3320,14 +4179,27 @@ export default function StudioOpsERP() {
                 <span>Search…</span>
                 <em>Ctrl K</em>
               </button>
-              <button
-                className="topbar-icon-btn"
-                onClick={() => setView(urgentCount > 0 ? "tasks" : view)}
-                title={urgentCount > 0 ? `${urgentCount} overdue item(s)` : "No overdue items"}
-              >
-                <Bell size={15} />
-                {urgentCount > 0 && <span className="topbar-icon-badge">{urgentCount > 9 ? "9+" : urgentCount}</span>}
-              </button>
+              <div className="notif-wrap" ref={notifRef}>
+                <button
+                  className="topbar-icon-btn"
+                  onClick={() => setNotifOpen((o) => !o)}
+                  title={notifications.length > 0 ? `${notifications.length} notification(s)` : "No notifications"}
+                >
+                  <Bell size={15} />
+                  {notifications.length > 0 && (
+                    <span className={`topbar-icon-badge ${urgentNotifCount === 0 ? "topbar-icon-badge-soft" : ""}`}>
+                      {notifications.length > 9 ? "9+" : notifications.length}
+                    </span>
+                  )}
+                </button>
+                {notifOpen && (
+                  <NotificationsPanel
+                    notifications={notifications}
+                    onNavigate={(v) => setView(v)}
+                    onClose={() => setNotifOpen(false)}
+                  />
+                )}
+              </div>
               <button className="topbar-avatar" onClick={() => setSettingsOpen(true)} title={session.user.email}>
                 {greetingName.charAt(0).toUpperCase()}
               </button>
@@ -3362,8 +4234,11 @@ export default function StudioOpsERP() {
               {view === "clients" && <ClientsView data={data} mutate={mutate} />}
               {view === "projects" && <ProjectsView data={data} mutate={mutate} userId={session.user.id} />}
               {view === "tasks" && <TasksView data={data} mutate={mutate} />}
+              {view === "employees" && <EmployeesView data={data} mutate={mutate} />}
               {view === "time" && <TimeView data={data} mutate={mutate} />}
               {view === "invoices" && <InvoicesView data={data} mutate={mutate} />}
+              {view === "finance" && <FinanceView data={data} mutate={mutate} />}
+              {view === "analytics" && <AnalyticsView data={data} />}
             </div>
           </div>
         </main>
@@ -3535,6 +4410,40 @@ const CSS = `
   border-radius: 999px; background: var(--red); color: #fff; font-size: 9px; font-weight: 700;
   display: flex; align-items: center; justify-content: center; border: 2px solid var(--paper-raised);
 }
+.topbar-icon-badge-soft { background: var(--ink); }
+.notif-wrap { position: relative; }
+.notif-panel {
+  position: absolute; top: calc(100% + 10px); right: 0; width: 340px; max-width: 88vw;
+  background: var(--paper-raised); border: 1.5px solid var(--rule); border-radius: 14px;
+  box-shadow: 0 12px 32px rgba(20,20,25,0.14); z-index: 40; overflow: hidden;
+}
+.notif-panel-head {
+  display: flex; align-items: center; justify-content: space-between; padding: 12px 14px;
+  border-bottom: 1px solid var(--rule);
+}
+.notif-panel-head h4 { margin: 0; font-size: 13.5px; }
+.notif-panel-body { max-height: 380px; overflow-y: auto; padding: 6px; }
+.notif-empty { padding: 18px 12px; text-align: center; font-size: 12.5px; }
+.notif-group { padding: 6px 4px; }
+.notif-group-label {
+  display: block; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--muted); padding: 4px 8px 6px;
+}
+.notif-row {
+  display: flex; align-items: flex-start; gap: 9px; width: 100%; text-align: left;
+  padding: 8px; border-radius: 9px; background: transparent;
+}
+.notif-row:hover { background: var(--paper-dim); }
+.notif-row-icon {
+  flex-shrink: 0; width: 24px; height: 24px; border-radius: 50%; display: flex;
+  align-items: center; justify-content: center; background: var(--paper-dim); color: var(--ink); margin-top: 1px;
+}
+.notif-row-icon-urgent { background: #FCEEEF; color: var(--red); }
+.notif-row-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.notif-row-title { font-size: 12.5px; font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.notif-row-sub { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.notif-row-message { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.notif-row-urgent .notif-row-message { color: var(--red); }
 .topbar-avatar {
   width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0; border: none;
   background: var(--ink); color: #fff; font-family: 'Fraunces', serif; font-weight: 700; font-size: 14px;
@@ -4119,6 +5028,22 @@ const CSS = `
 .expense-summary > div { display: flex; flex-direction: column; gap: 2px; }
 .expense-summary strong { font-family: 'Fraunces', serif; font-size: 17px; }
 .expense-add-row { grid-template-columns: 1fr 110px 140px 34px; margin-bottom: 14px; }
+
+/* team picker (project <-> employees) */
+.team-picker { display: flex; flex-wrap: wrap; gap: 6px; }
+.team-picker-chip {
+  display: flex; align-items: center; gap: 6px; padding: 6px 10px; border: 1.5px solid var(--rule);
+  border-radius: 999px; font-size: 12px; cursor: pointer; background: var(--paper-raised);
+}
+.team-picker-chip input { accent-color: var(--ink); }
+.modal-section-title { font-size: 13px; margin: 18px 0 8px; color: var(--ink); }
+
+/* finance */
+.finance-net-figure { display: block; font-family: 'Fraunces', serif; font-size: 26px; padding: 4px 2px 2px; }
+
+/* analytics — team performance */
+.team-perf-list { display: flex; flex-direction: column; gap: 14px; }
+.team-perf-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 5px; font-size: 13px; }
 
 /* time view */
 .week-nav { display: flex; align-items: center; gap: 8px; }
