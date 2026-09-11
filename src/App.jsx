@@ -113,6 +113,7 @@ const emptyData = () => ({
   expenses: [],
   timeEntries: [],
   employees: [],
+  dismissedNotifications: [],
   jobCounter: 1001,
   settings: { ...DEFAULT_SETTINGS },
 });
@@ -173,6 +174,7 @@ function seedData(accountEmail, accountPhone) {
       { id: uid("time"), projectId: p2, hours: 1.5, date: addDays(todayISO(), -3), note: "Review pass" },
     ],
     jobCounter: 1004,
+    dismissedNotifications: [],
     settings: {
       studioName: "Studio Ops",
       tagline: "Creative agency, Algiers",
@@ -220,6 +222,7 @@ function useStudioData(userId, accountEmail, accountPhone) {
             expenses: row.data.expenses || [],
             timeEntries: row.data.timeEntries || [],
             employees: row.data.employees || [],
+            dismissedNotifications: row.data.dismissedNotifications || [],
             settings: { ...DEFAULT_SETTINGS, ...(row.data.settings || {}) },
           });
         } else {
@@ -1165,11 +1168,15 @@ function GlobalSearchModal({ data, onClose, onNavigate }) {
 /* ---------------------- notifications ---------------------- */
 // Builds the notification feed: overdue + soon-due tasks, invoices, and
 // project deadlines. `withinDays` controls the "upcoming" window.
-function buildNotifications(data, withinDays = 3) {
+// `dismissed` is an array of notification ids the user has already
+// cleared — they're filtered out until the underlying date changes
+// (which produces a different id-less state, so nothing reappears).
+function buildNotifications(data, withinDays = 3, dismissed = []) {
   if (!data) return [];
   const today = new Date(new Date().toDateString());
   const horizon = new Date(today);
   horizon.setDate(horizon.getDate() + withinDays);
+  const dismissedSet = new Set(dismissed);
 
   const clientName = (id) => data.clients.find((c) => c.id === id)?.company || data.clients.find((c) => c.id === id)?.name || "";
   const projectName = (id) => data.projects.find((p) => p.id === id)?.name || "";
@@ -1189,8 +1196,10 @@ function buildNotifications(data, withinDays = 3) {
     if (t.status === "done" || !t.dueDate) return;
     const bucket = dateBucket(t.dueDate);
     if (!bucket) return;
+    const id = `task-${t.id}`;
+    if (dismissedSet.has(id)) return;
     items.push({
-      id: `task-${t.id}`,
+      id,
       kind: "task",
       severity: bucket === "overdue" ? "urgent" : "soon",
       icon: CheckSquare,
@@ -1206,8 +1215,10 @@ function buildNotifications(data, withinDays = 3) {
     if (!p.deadline || p.status === "done" || p.status === "completed" || p.status === "archived") return;
     const bucket = dateBucket(p.deadline);
     if (!bucket) return;
+    const id = `project-${p.id}`;
+    if (dismissedSet.has(id)) return;
     items.push({
-      id: `project-${p.id}`,
+      id,
       kind: "project",
       severity: bucket === "overdue" ? "urgent" : "soon",
       icon: Briefcase,
@@ -1223,9 +1234,11 @@ function buildNotifications(data, withinDays = 3) {
     if (inv.status === "paid" || inv.status === "void" || !inv.dueDate) return;
     const bucket = dateBucket(inv.dueDate);
     if (!bucket) return;
+    const id = `invoice-${inv.id}`;
+    if (dismissedSet.has(id)) return;
     const total = (inv.items || []).reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.rate) || 0), 0);
     items.push({
-      id: `invoice-${inv.id}`,
+      id,
       kind: "invoice",
       severity: bucket === "overdue" ? "urgent" : "soon",
       icon: Receipt,
@@ -1245,59 +1258,80 @@ function buildNotifications(data, withinDays = 3) {
   return items;
 }
 
-function NotificationsPanel({ notifications, onNavigate, onClose }) {
+function NotificationsPanel({ notifications, onNavigate, onDismiss, onClearAll, onClose }) {
   const urgent = notifications.filter((n) => n.severity === "urgent");
   const soon = notifications.filter((n) => n.severity === "soon");
 
   const Row = ({ n }) => {
     const Icon = n.icon;
     return (
-      <button
-        className={`notif-row ${n.severity === "urgent" ? "notif-row-urgent" : ""}`}
-        onClick={() => {
-          onNavigate(n.view);
-          onClose();
-        }}
-      >
-        <span className={`notif-row-icon ${n.severity === "urgent" ? "notif-row-icon-urgent" : ""}`}>
-          <Icon size={13} />
-        </span>
-        <span className="notif-row-body">
-          <span className="notif-row-title">{n.title}</span>
-          <span className="notif-row-sub">{n.subtitle}</span>
-          <span className="notif-row-message">{n.message}</span>
-        </span>
-      </button>
+      <div className={`notif-row ${n.severity === "urgent" ? "notif-row-urgent" : ""}`}>
+        <button
+          className="notif-row-main"
+          onClick={() => {
+            onNavigate(n.view);
+            onClose();
+          }}
+        >
+          <span className={`notif-row-icon ${n.severity === "urgent" ? "notif-row-icon-urgent" : ""}`}>
+            <Icon size={13} />
+          </span>
+          <span className="notif-row-body">
+            <span className="notif-row-title">{n.title}</span>
+            <span className="notif-row-sub">{n.subtitle}</span>
+            <span className="notif-row-message">{n.message}</span>
+          </span>
+        </button>
+        <button
+          className="notif-row-dismiss"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDismiss(n.id);
+          }}
+          title="Dismiss"
+          aria-label="Dismiss notification"
+        >
+          <X size={13} />
+        </button>
+      </div>
     );
   };
 
   return (
-    <div className="notif-panel">
-      <div className="notif-panel-head">
-        <h4>Notifications</h4>
-        <button className="icon-btn" onClick={onClose}><X size={14} /></button>
-      </div>
-      <div className="notif-panel-body">
-        {notifications.length === 0 ? (
-          <p className="muted-note notif-empty">You're all caught up — nothing overdue or due soon.</p>
-        ) : (
-          <>
-            {urgent.length > 0 && (
-              <div className="notif-group">
-                <span className="notif-group-label">Overdue</span>
-                {urgent.map((n) => <Row key={n.id} n={n} />)}
-              </div>
+    <>
+      <div className="notif-veil" onClick={onClose} />
+      <div className="notif-panel">
+        <div className="notif-panel-head">
+          <h4>Notifications</h4>
+          <div className="notif-panel-head-actions">
+            {notifications.length > 0 && (
+              <button className="notif-clear-all" onClick={onClearAll}>Clear all</button>
             )}
-            {soon.length > 0 && (
-              <div className="notif-group">
-                <span className="notif-group-label">Coming up</span>
-                {soon.map((n) => <Row key={n.id} n={n} />)}
-              </div>
-            )}
-          </>
-        )}
+            <button className="icon-btn" onClick={onClose}><X size={14} /></button>
+          </div>
+        </div>
+        <div className="notif-panel-body">
+          {notifications.length === 0 ? (
+            <p className="muted-note notif-empty">You're all caught up — nothing overdue or due soon.</p>
+          ) : (
+            <>
+              {urgent.length > 0 && (
+                <div className="notif-group">
+                  <span className="notif-group-label">Overdue</span>
+                  {urgent.map((n) => <Row key={n.id} n={n} />)}
+                </div>
+              )}
+              {soon.length > 0 && (
+                <div className="notif-group">
+                  <span className="notif-group-label">Coming up</span>
+                  {soon.map((n) => <Row key={n.id} n={n} />)}
+                </div>
+              )}
+            </>
+          )}
+        </div>
       </div>
-    </div>
+    </>
   );
 }
 
@@ -4052,7 +4086,20 @@ export default function StudioOpsERP() {
     };
   }, [notifOpen]);
 
-  const notifications = useMemo(() => buildNotifications(data), [data]);
+  const notifications = useMemo(
+    () => buildNotifications(data, 3, data?.dismissedNotifications || []),
+    [data]
+  );
+
+  const dismissNotification = (id) => {
+    mutate({ ...data, dismissedNotifications: [...(data.dismissedNotifications || []), id] });
+  };
+
+  const clearAllNotifications = () => {
+    const ids = notifications.map((n) => n.id);
+    mutate({ ...data, dismissedNotifications: [...new Set([...(data.dismissedNotifications || []), ...ids])] });
+    setNotifOpen(false);
+  };
 
   // Portal routes are public and must work whether or not anyone is signed
   // in on this device, so they're checked before the auth gate below.
@@ -4196,13 +4243,12 @@ export default function StudioOpsERP() {
                   <NotificationsPanel
                     notifications={notifications}
                     onNavigate={(v) => setView(v)}
+                    onDismiss={dismissNotification}
+                    onClearAll={clearAllNotifications}
                     onClose={() => setNotifOpen(false)}
                   />
                 )}
               </div>
-              <button className="topbar-avatar" onClick={() => setSettingsOpen(true)} title={session.user.email}>
-                {greetingName.charAt(0).toUpperCase()}
-              </button>
               <span className="topbar-date">{fmtDate(todayISO())}</span>
             </div>
           </header>
@@ -4412,6 +4458,7 @@ const CSS = `
 }
 .topbar-icon-badge-soft { background: var(--ink); }
 .notif-wrap { position: relative; }
+.notif-veil { position: fixed; inset: 0; background: transparent; z-index: 39; }
 .notif-panel {
   position: absolute; top: calc(100% + 10px); right: 0; width: 340px; max-width: 88vw;
   background: var(--paper-raised); border: 1.5px solid var(--rule); border-radius: 14px;
@@ -4422,6 +4469,12 @@ const CSS = `
   border-bottom: 1px solid var(--rule);
 }
 .notif-panel-head h4 { margin: 0; font-size: 13.5px; }
+.notif-panel-head-actions { display: flex; align-items: center; gap: 10px; }
+.notif-clear-all {
+  font-size: 11.5px; color: var(--muted); font-weight: 600; padding: 2px 4px;
+  border-radius: 6px; background: transparent;
+}
+.notif-clear-all:hover { color: var(--ink); background: var(--paper-dim); }
 .notif-panel-body { max-height: 380px; overflow-y: auto; padding: 6px; }
 .notif-empty { padding: 18px 12px; text-align: center; font-size: 12.5px; }
 .notif-group { padding: 6px 4px; }
@@ -4430,10 +4483,18 @@ const CSS = `
   color: var(--muted); padding: 4px 8px 6px;
 }
 .notif-row {
-  display: flex; align-items: flex-start; gap: 9px; width: 100%; text-align: left;
-  padding: 8px; border-radius: 9px; background: transparent;
+  display: flex; align-items: stretch; gap: 2px; width: 100%; border-radius: 9px;
 }
 .notif-row:hover { background: var(--paper-dim); }
+.notif-row-main {
+  display: flex; align-items: flex-start; gap: 9px; flex: 1; min-width: 0; text-align: left;
+  padding: 8px; background: transparent;
+}
+.notif-row-dismiss {
+  flex-shrink: 0; width: 26px; display: flex; align-items: center; justify-content: center;
+  color: var(--muted); border-radius: 6px; align-self: center; margin-right: 4px;
+}
+.notif-row-dismiss:hover { color: var(--red); background: var(--paper-raised); }
 .notif-row-icon {
   flex-shrink: 0; width: 24px; height: 24px; border-radius: 50%; display: flex;
   align-items: center; justify-content: center; background: var(--paper-dim); color: var(--ink); margin-top: 1px;
@@ -4444,12 +4505,18 @@ const CSS = `
 .notif-row-sub { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .notif-row-message { font-size: 11px; color: var(--muted); margin-top: 2px; }
 .notif-row-urgent .notif-row-message { color: var(--red); }
-.topbar-avatar {
-  width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0; border: none;
-  background: var(--ink); color: #fff; font-family: 'Fraunces', serif; font-weight: 700; font-size: 14px;
-  display: flex; align-items: center; justify-content: center;
+/* On narrow / mobile viewports, fixed positioning as a bottom sheet — this
+   avoids the dropdown getting clipped by any ancestor's overflow:hidden,
+   which is what made it render only partially on phones. */
+@media (max-width: 720px) {
+  .notif-veil { background: rgba(20,20,25,0.35); }
+  .notif-panel {
+    position: fixed; top: auto; left: 0; right: 0; bottom: 0; width: 100%; max-width: 100%;
+    border-radius: 16px 16px 0 0; max-height: 75vh; box-shadow: 0 -8px 28px rgba(20,20,25,0.22);
+  }
+  .notif-panel-body { max-height: calc(75vh - 50px); }
 }
-.topbar-avatar:hover { opacity: 0.88; }
+
 .conn-warning {
   display: flex; align-items: center; gap: 8px; background: #FCEEEF; color: var(--red);
   border-bottom: 1px solid var(--red); font-size: 12px; padding: 8px 34px; flex-shrink: 0;
