@@ -2577,32 +2577,57 @@ function InvoicePrintable({ invoice, client, project, settings }) {
   );
 }
 
+const INVOICE_NATURAL_WIDTH = 700;
+
 function InvoicePreviewModal({ invoice, client, project, settings, onClose }) {
-  const printRef = useRef(null);
+  const frameRef = useRef(null);
+  const pdfRef = useRef(null); // hidden, fixed-width copy — always captured whole, used for the PDF and for height measurement
+  const [scale, setScale] = useState(1);
+  const [naturalHeight, setNaturalHeight] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const toast = useToast();
 
+  useEffect(() => {
+    const measure = () => {
+      const frameW = frameRef.current?.clientWidth || INVOICE_NATURAL_WIDTH;
+      setScale(Math.min(1, frameW / INVOICE_NATURAL_WIDTH));
+      setNaturalHeight(pdfRef.current?.offsetHeight || 0);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    if (frameRef.current) ro.observe(frameRef.current);
+    window.addEventListener("resize", measure);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [invoice, client, project, settings]);
+
   const downloadPdf = async () => {
-    const node = printRef.current;
+    const node = pdfRef.current;
     if (!node || busy) return;
     setBusy(true);
     setError("");
     try {
-      const rect = node.getBoundingClientRect();
+      const width = node.scrollWidth;
+      const height = node.scrollHeight;
       const canvas = await html2canvas(node, {
         scale: 2,
         backgroundColor: "#ffffff",
         useCORS: true,
+        width,
+        height,
+        windowWidth: width,
       });
       const imgData = canvas.toDataURL("image/png");
       const pdf = new jsPDF({
-        orientation: rect.height >= rect.width ? "portrait" : "landscape",
+        orientation: height >= width ? "portrait" : "landscape",
         unit: "px",
-        format: [rect.width, rect.height],
+        format: [width, height],
         hotfixes: ["px_scaling"],
       });
-      pdf.addImage(imgData, "PNG", 0, 0, rect.width, rect.height);
+      pdf.addImage(imgData, "PNG", 0, 0, width, height);
       pdf.save(`Invoice-${invoice.number}.pdf`);
       toast?.("PDF downloaded");
     } catch (err) {
@@ -2621,8 +2646,20 @@ function InvoicePreviewModal({ invoice, client, project, settings, onClose }) {
         </button>
         {error && <span className="field-hint field-hint-error">{error}</span>}
       </div>
-      <div className="invoice-print-frame">
-        <div ref={printRef}>
+
+      {/* Visible preview — the real invoice, rendered at a fixed "page" width and
+          scaled down (never up) to fit whatever space is available, so nothing
+          ever gets cropped or needs horizontal scrolling. */}
+      <div className="invoice-print-frame" ref={frameRef} style={{ height: naturalHeight * scale || undefined }}>
+        <div className="invoice-print-scale" style={{ width: INVOICE_NATURAL_WIDTH, transform: `scale(${scale})` }}>
+          <InvoicePrintable invoice={invoice} client={client} project={project} settings={settings} />
+        </div>
+      </div>
+
+      {/* Hidden, always full-size copy — the PDF is captured from this one so the
+          download is identical and complete regardless of screen size. */}
+      <div className="invoice-print-offscreen" aria-hidden="true">
+        <div ref={pdfRef} style={{ width: INVOICE_NATURAL_WIDTH }}>
           <InvoicePrintable invoice={invoice} client={client} project={project} settings={settings} />
         </div>
       </div>
@@ -3745,7 +3782,9 @@ const CSS = `
 
 /* printable invoice */
 .invoice-preview-actions { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
-.invoice-print-frame { background: #fff; border: 1px solid var(--rule); border-radius: 8px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.invoice-print-frame { background: #fff; border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; position: relative; }
+.invoice-print-scale { transform-origin: top left; }
+.invoice-print-offscreen { position: fixed; top: 0; left: -99999px; pointer-events: none; }
 
 .invoice-print {
   --inv-navy: #0B1130;
@@ -3894,13 +3933,6 @@ const CSS = `
   .modal-sheet { max-height: 92vh; }
   .modal-head { padding: 14px 16px; }
   .modal-body { padding: 14px 16px 18px; }
-  .invoice-print { padding: 22px 18px 20px; }
-  .invoice-print-head { flex-direction: column; gap: 16px; }
-  .invoice-print-divider { display: none; }
-  .invoice-print-meta { align-items: flex-start; text-align: left; }
-  .invoice-print-totals { width: 100%; min-width: 0; }
-  .invoice-print-table { min-width: 460px; }
-  .invoice-print-table th, .invoice-print-table td { padding: 11px; font-size: 12.5px; }
   .invoice-preview-actions { gap: 8px; }
 
   /* client portal */
@@ -3912,7 +3944,6 @@ const CSS = `
   .stat-grid { grid-template-columns: 1fr; }
   .stat-value { font-size: 22px; }
   .line-items-head, .line-item-row { grid-template-columns: 1fr 46px 68px 24px; }
-  .invoice-print-table th, .invoice-print-table td { padding: 10px; font-size: 12px; }
 }
 
 /* portal code + sidebar entry */
