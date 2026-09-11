@@ -3532,8 +3532,8 @@ const CSS = `
 
 /* auth screen */
 .auth-input-row {
-  display: flex; align-items: center; gap: 8px; border: 1.5px solid var(--rule); border-radius: 5px;
-  padding: 0 10px; background: var(--paper-raised); color: var(--muted);
+  display: flex; align-items: center; gap: 8px; border: 1.5px solid var(--rule); border-radius: 12px;
+  padding: 0 12px; background: var(--paper-raised); color: var(--muted);
 }
 .auth-input-row input { border: none; padding: 9px 0; background: transparent; }
 .auth-input-row input:focus { border: none; }
@@ -4015,15 +4015,23 @@ const CSS = `
 /* client portal */
 .portal-shell {
   width: 100%; min-height: 100vh; display: flex; align-items: center; justify-content: center;
-  background: var(--paper); padding: 24px;
+  padding: 24px; position: relative; overflow: hidden;
+  background: linear-gradient(160deg, #FCEEE1 0%, #F4F7FB 32%, #ECE7FB 68%, #E1F5EC 100%);
 }
+.portal-shell::before, .portal-shell::after {
+  content: ""; position: absolute; border-radius: 50%; filter: blur(60px); opacity: 0.55; z-index: 0;
+}
+.portal-shell::before { width: 360px; height: 360px; background: #F6D9AE; top: -120px; left: -100px; }
+.portal-shell::after { width: 320px; height: 320px; background: #BFE9DD; bottom: -110px; right: -90px; }
 .portal-shell-view { align-items: flex-start; padding: 40px 20px; }
 .portal-gate {
-  background: var(--paper-raised); border: 1px solid var(--rule); border-radius: 12px; padding: 36px 32px;
+  background: var(--paper-raised); border: none; border-radius: 26px; padding: 38px 32px;
+  box-shadow: 0 24px 60px -24px rgba(22,41,77,0.35);
   width: 380px; max-width: 100%; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 10px;
+  position: relative; z-index: 1;
 }
 .portal-badge {
-  width: 46px; height: 46px; border-radius: 50%; border: 2px solid var(--red); color: var(--red);
+  width: 52px; height: 52px; border-radius: 50%; border: none; color: var(--red); background: #FBE7EA;
   display: flex; align-items: center; justify-content: center; transform: rotate(-4deg); margin-bottom: 4px;
 }
 .portal-gate h1 { font-size: 21px; }
