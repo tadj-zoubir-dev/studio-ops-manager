@@ -4283,12 +4283,12 @@ export default function StudioOpsERP() {
                 <Lock size={13} />
                 <span>Your 7-day trial has ended. The workspace is now <strong>read-only</strong> — you can browse, but adding, editing, or deleting is disabled.</span>
               </div>
-            ) : trial.daysLeft <= 3 ? (
-              <div className="trial-banner trial-banner-warn">
+            ) : (
+              <div className={`trial-banner ${trial.daysLeft <= 3 ? "trial-banner-warn" : "trial-banner-info"}`}>
                 <Clock size={13} />
-                <span>{trial.daysLeft === 0 ? "Your trial ends today." : `${trial.daysLeft} day${trial.daysLeft === 1 ? "" : "s"} left in your trial.`} It'll switch to read-only once it ends.</span>
+                <span>{trial.daysLeft === 0 ? "Your trial ends today." : `${trial.daysLeft} day${trial.daysLeft === 1 ? "" : "s"} left in your free trial.`} It'll switch to read-only once it ends.</span>
               </div>
-            ) : null
+            )
           )}
 
           {dataStatus === "error" && (
@@ -4554,6 +4554,7 @@ const CSS = `
 }
 .trial-banner svg { flex-shrink: 0; }
 .trial-banner-warn { background: #FBF3E6; color: var(--amber); border-bottom-color: var(--amber); }
+.trial-banner-info { background: #EAF1FB; color: var(--blue); border-bottom-color: var(--blue); }
 .trial-banner-expired { background: #FCEEEF; color: var(--red); border-bottom-color: var(--red); }
 
 /* auth screen */
