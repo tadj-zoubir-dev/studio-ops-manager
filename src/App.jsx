@@ -1151,26 +1151,16 @@ const NAV_ITEMS = [
 ];
 
 function Sidebar({ view, setView, counts, onOpenPortal, onOpenSettings, onSignOut, navOpen, settings = DEFAULT_SETTINGS }) {
-  const initials = (settings.studioName || "Studio Ops")
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((w) => w[0])
-    .join("")
-    .toUpperCase() || "SO";
   return (
     <aside className={`sidebar ${navOpen ? "sidebar-open" : ""}`}>
       <div className="brand">
         {settings.logoDataUrl ? (
           <img className="brand-logo-img brand-logo-img-solo" src={settings.logoDataUrl} alt={settings.studioName || "Logo"} />
         ) : (
-          <>
-            <div className="brand-mark">{initials}</div>
-            <div className="brand-word">
-              <strong>{(settings.studioName || "Studio Ops").toUpperCase()}</strong>
-              <span>{settings.tagline || "traffic & production"}</span>
-            </div>
-          </>
+          <button type="button" className="brand-add-logo" onClick={onOpenSettings}>
+            <Upload size={14} />
+            <span>Add your logo</span>
+          </button>
         )}
       </div>
       <nav className="nav">
@@ -3478,17 +3468,14 @@ const CSS = `
   box-shadow: 0 1px 2px rgba(20,20,25,0.05);
 }
 .brand { display: flex; align-items: center; gap: 10px; padding: 0 6px 22px; border-bottom: 1px solid var(--rule); margin-bottom: 18px; }
-.brand-mark {
-  width: 34px; height: 34px; border: 2px solid var(--red); border-radius: 6px;
-  display: flex; align-items: center; justify-content: center;
-  font-family: 'Fraunces', serif; font-weight: 700; font-size: 13px; color: #fff;
-  flex-shrink: 0; overflow: hidden; background: var(--ink);
+.brand-add-logo {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 12px;
+  border: 1.5px dashed var(--rule); border-radius: 12px; background: transparent; color: var(--muted);
+  font-size: 12.5px; font-weight: 600; transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
 }
+.brand-add-logo:hover { border-color: var(--red); color: var(--red); background: rgba(214,69,80,0.06); }
 .brand-logo-img { max-width: 40px; max-height: 40px; width: auto; height: auto; object-fit: contain; flex-shrink: 0; display: block; }
 .brand-logo-img-solo { max-width: 168px; max-height: 44px; }
-.brand-word { display: flex; flex-direction: column; line-height: 1.25; }
-.brand-word strong { font-family: 'Fraunces', serif; font-size: 15px; letter-spacing: 0.02em; }
-.brand-word span { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
 
 .nav { display: flex; flex-direction: column; gap: 2px; }
 .nav-item {
