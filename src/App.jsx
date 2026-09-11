@@ -3303,7 +3303,7 @@ export default function StudioOpsERP() {
               <div>
                 {view === "dashboard" ? (
                   <>
-                    <h1>Welcome <span className="wave-emoji">👋</span></h1>
+                    <h1>Welcome, {greetingName} <span className="wave-emoji">👋</span></h1>
                     <p>Here's what's happening in your studio.</p>
                   </>
                 ) : (
@@ -3501,46 +3501,46 @@ const CSS = `
 /* main */
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; height: calc(100vh - 20px); overflow: hidden; background: var(--paper-raised); border-radius: 24px; box-shadow: 0 1px 2px rgba(20,20,25,0.05); }
 .topbar {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 28px 36px; border-bottom: 1px solid var(--rule); flex-shrink: 0;
+  display: flex; align-items: flex-end; justify-content: space-between;
+  padding: 26px 34px 18px; border-bottom: 1px solid var(--rule); flex-shrink: 0;
 }
-.topbar-left { display: flex; align-items: center; gap: 14px; }
+.topbar-left { display: flex; align-items: flex-end; gap: 12px; }
 .hamburger-btn {
-  display: none; align-items: center; justify-content: center; width: 32px; height: 32px;
-  border-radius: 50%; border: none; background: transparent; color: var(--muted);
-  flex-shrink: 0; transition: background 0.15s ease, color 0.15s ease;
+  display: none; align-items: center; justify-content: center; width: 34px; height: 34px;
+  border-radius: 6px; border: 1px solid var(--rule); background: var(--paper-raised); color: var(--ink);
+  margin-bottom: 2px; flex-shrink: 0;
 }
-.hamburger-btn:hover { background: var(--paper-dim); color: var(--ink); }
-.topbar h1 { font-size: 21px; font-weight: 600; letter-spacing: -0.01em; }
-.topbar p { margin: 3px 0 0; color: var(--muted); font-size: 12.5px; }
-.topbar-date { font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: var(--muted); letter-spacing: 0.02em; }
-.topbar-right { display: flex; align-items: center; gap: 10px; }
+.hamburger-btn:hover { background: var(--paper-dim); }
+.topbar h1 { font-size: 25px; }
+.topbar p { margin: 4px 0 0; color: var(--muted); font-size: 12.5px; }
+.topbar-date { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--muted); }
+.topbar-right { display: flex; align-items: center; gap: 14px; }
 .search-trigger {
-  display: flex; align-items: center; gap: 7px; background: transparent; border: none;
-  border-radius: 999px; padding: 7px 4px; color: var(--muted); font-size: 12.5px; transition: color 0.15s ease;
+  display: flex; align-items: center; gap: 7px; background: var(--paper-raised); border: 1.5px solid var(--rule);
+  border-radius: 999px; padding: 7px 12px; color: var(--muted); font-size: 12.5px; transition: border-color 0.15s ease, color 0.15s ease;
 }
-.search-trigger:hover { color: var(--ink); }
-.search-trigger em { font-style: normal; font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: var(--muted); padding: 1px 5px; margin-left: 2px; }
+.search-trigger:hover { border-color: var(--ink); color: var(--ink); }
+.search-trigger em { font-style: normal; font-family: 'IBM Plex Mono', monospace; font-size: 10px; border: 1px solid var(--rule); border-radius: 3px; padding: 1px 5px; margin-left: 4px; }
 .wave-emoji { display: inline-block; animation: wave 1.8s ease-in-out infinite; transform-origin: 70% 70%; }
 @keyframes wave { 0%, 60%, 100% { transform: rotate(0deg); } 15% { transform: rotate(14deg); } 30% { transform: rotate(-8deg); } 45% { transform: rotate(10deg); } }
 .topbar-icon-btn {
   position: relative; display: inline-flex; align-items: center; justify-content: center;
-  width: 32px; height: 32px; border-radius: 50%; border: none;
-  background: transparent; color: var(--muted); flex-shrink: 0;
-  transition: background 0.15s ease, color 0.15s ease;
+  width: 36px; height: 36px; border-radius: 50%; border: 1.5px solid var(--rule);
+  background: var(--paper-raised); color: var(--ink); flex-shrink: 0;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
-.topbar-icon-btn:hover { background: var(--paper-dim); color: var(--ink); }
+.topbar-icon-btn:hover { background: var(--paper-dim); border-color: var(--ink); }
 .topbar-icon-badge {
-  position: absolute; top: -1px; right: -1px; min-width: 14px; height: 14px; padding: 0 3px;
-  border-radius: 999px; background: var(--red); color: #fff; font-size: 8.5px; font-weight: 700;
+  position: absolute; top: -3px; right: -3px; min-width: 15px; height: 15px; padding: 0 3px;
+  border-radius: 999px; background: var(--red); color: #fff; font-size: 9px; font-weight: 700;
   display: flex; align-items: center; justify-content: center; border: 2px solid var(--paper-raised);
 }
 .topbar-avatar {
-  width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0; border: 1px solid var(--rule);
-  background: transparent; color: var(--ink); font-weight: 600; font-size: 13px;
-  display: flex; align-items: center; justify-content: center; transition: border-color 0.15s ease;
+  width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0; border: none;
+  background: var(--ink); color: #fff; font-family: 'Fraunces', serif; font-weight: 700; font-size: 14px;
+  display: flex; align-items: center; justify-content: center;
 }
-.topbar-avatar:hover { border-color: var(--ink); }
+.topbar-avatar:hover { opacity: 0.88; }
 .conn-warning {
   display: flex; align-items: center; gap: 8px; background: #FCEEEF; color: var(--red);
   border-bottom: 1px solid var(--red); font-size: 12px; padding: 8px 34px; flex-shrink: 0;
