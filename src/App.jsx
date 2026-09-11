@@ -2222,7 +2222,6 @@ function TasksView({ data, mutate }) {
                             aria-label={`Select ${t.title}`}
                           />
                           <GripVertical size={13} className="drag-handle" />
-                          <Stamp label={TASK_PRIORITY[t.priority]?.label} color={TASK_PRIORITY[t.priority]?.color} size="sm" />
                         </div>
                         <div className="ticket-actions">
                           <button className="icon-btn" onClick={() => setModal({ mode: "edit", task: t })} disabled={locked} title={locked ? "Read-only — trial has ended" : undefined}>
@@ -2234,7 +2233,10 @@ function TasksView({ data, mutate }) {
                         </div>
                       </div>
                       <strong>{t.title}</strong>
-                      <span className="task-card-project">{projectName(t.projectId)}</span>
+                      <div className="task-card-meta">
+                        <span className="task-card-project">{projectName(t.projectId)}</span>
+                        <Stamp label={TASK_PRIORITY[t.priority]?.label} color={TASK_PRIORITY[t.priority]?.color} size="sm" />
+                      </div>
                       <div className="task-card-foot">
                         <span>{t.assignee || "Unassigned"}</span>
                         <span className={isOverdue(t.dueDate) && t.status !== "done" ? "amount-warn" : ""}>
@@ -3721,7 +3723,7 @@ const CSS = `
 .ticket-notes { font-size: 12px; color: var(--muted); margin: 8px 0 0; line-height: 1.5; }
 .ticket-meta-row { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--muted); margin-top: 8px; font-family: 'IBM Plex Mono', monospace; }
 .ticket-foot { display: flex; align-items: center; justify-content: space-between; padding-top: 8px; border-top: 1px solid var(--paper-dim); }
-.ticket-actions { display: flex; gap: 6px; }
+.ticket-actions { display: flex; gap: 6px; flex-shrink: 0; }
 .amount-warn { color: var(--red); font-weight: 600; font-size: 12px; }
 .amount-good { color: var(--green); font-weight: 600; font-size: 12px; }
 .amount-quiet { color: var(--muted); font-size: 12px; }
@@ -3773,13 +3775,14 @@ const CSS = `
 .board-col-head { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; padding: 2px 4px 4px; color: var(--ink); }
 .board-col-head em { font-style: normal; margin-left: auto; color: var(--muted); font-family: 'IBM Plex Mono', monospace; font-size: 11px; }
 .board-col-body { display: flex; flex-direction: column; gap: 8px; }
-.task-card { background: var(--paper-raised); border: 1px solid var(--rule); border-radius: 7px; padding: 10px 11px; position: relative; display: flex; flex-direction: column; gap: 6px; cursor: grab; transition: box-shadow 0.15s ease, transform 0.15s ease; }
+.task-card { background: var(--paper-raised); border: 1px solid var(--rule); border-radius: 7px; padding: 10px 11px; position: relative; display: flex; flex-direction: column; gap: 7px; cursor: grab; transition: box-shadow 0.15s ease, transform 0.15s ease; }
 .task-card:hover { box-shadow: 0 4px 12px rgba(23,24,28,0.08); }
 .task-card:active { cursor: grabbing; }
 .drag-handle { color: var(--rule); flex-shrink: 0; }
-.task-card-top { display: flex; align-items: center; justify-content: space-between; }
-.task-card-top-left { display: flex; align-items: center; gap: 6px; }
+.task-card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.task-card-top-left { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .task-card strong { font-size: 12.5px; line-height: 1.35; }
+.task-card-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .task-card-project { font-size: 11px; color: var(--muted); }
 .task-card-foot { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); font-family: 'IBM Plex Mono', monospace; }
 .mini-select { margin-top: 2px; font-size: 11px; padding: 5px 7px; }
