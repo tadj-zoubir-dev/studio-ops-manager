@@ -3745,7 +3745,7 @@ const CSS = `
 
 /* printable invoice */
 .invoice-preview-actions { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
-.invoice-print-frame { background: #fff; border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; }
+.invoice-print-frame { background: #fff; border: 1px solid var(--rule); border-radius: 8px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
 .invoice-print {
   --inv-navy: #0B1130;
@@ -3825,7 +3825,7 @@ const CSS = `
   position: fixed; inset: 0; background: rgba(23,24,28,0.5); display: flex; align-items: center; justify-content: center;
   padding: 20px; z-index: 50; animation: veilFadeIn 0.15s ease;
 }
-.modal-sheet { background: var(--paper); border-radius: 10px; width: 440px; max-width: 100%; max-height: 88vh; overflow-y: auto; box-shadow: 0 20px 50px rgba(0,0,0,0.25); animation: sheetPopIn 0.18s cubic-bezier(0.2, 0.8, 0.3, 1); }
+.modal-sheet { background: var(--paper); border-radius: 10px; width: 440px; max-width: 100%; max-height: 88vh; overflow-y: auto; overflow-x: hidden; box-shadow: 0 20px 50px rgba(0,0,0,0.25); animation: sheetPopIn 0.18s cubic-bezier(0.2, 0.8, 0.3, 1); }
 .modal-wide { width: 620px; }
 .modal-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--rule); position: sticky; top: 0; background: var(--paper); }
 .modal-head h3 { font-size: 16px; }
@@ -3898,7 +3898,9 @@ const CSS = `
   .invoice-print-head { flex-direction: column; gap: 16px; }
   .invoice-print-divider { display: none; }
   .invoice-print-meta { align-items: flex-start; text-align: left; }
-  .invoice-print-totals { width: 100%; }
+  .invoice-print-totals { width: 100%; min-width: 0; }
+  .invoice-print-table { min-width: 460px; }
+  .invoice-print-table th, .invoice-print-table td { padding: 11px; font-size: 12.5px; }
   .invoice-preview-actions { gap: 8px; }
 
   /* client portal */
