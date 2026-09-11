@@ -1161,13 +1161,17 @@ function Sidebar({ view, setView, counts, onOpenPortal, onOpenSettings, onSignOu
   return (
     <aside className={`sidebar ${navOpen ? "sidebar-open" : ""}`}>
       <div className="brand">
-        <div className={`brand-mark ${settings.logoDataUrl ? "brand-mark-logo" : ""}`}>
-          {settings.logoDataUrl ? <img src={settings.logoDataUrl} alt={settings.studioName || "Logo"} /> : initials}
-        </div>
-        <div className="brand-word">
-          <strong>{(settings.studioName || "Studio Ops").toUpperCase()}</strong>
-          <span>{settings.tagline || "traffic & production"}</span>
-        </div>
+        {settings.logoDataUrl ? (
+          <img className="brand-logo-img brand-logo-img-solo" src={settings.logoDataUrl} alt={settings.studioName || "Logo"} />
+        ) : (
+          <>
+            <div className="brand-mark">{initials}</div>
+            <div className="brand-word">
+              <strong>{(settings.studioName || "Studio Ops").toUpperCase()}</strong>
+              <span>{settings.tagline || "traffic & production"}</span>
+            </div>
+          </>
+        )}
       </div>
       <nav className="nav">
         {NAV_ITEMS.map(({ key, label, icon: Icon }) => (
@@ -3480,8 +3484,8 @@ const CSS = `
   font-family: 'Fraunces', serif; font-weight: 700; font-size: 13px; color: #fff;
   flex-shrink: 0; overflow: hidden; background: var(--ink);
 }
-.brand-mark-logo { padding: 3px; background: var(--paper-dim); }
-.brand-mark img { width: 100%; height: 100%; object-fit: contain; }
+.brand-logo-img { max-width: 40px; max-height: 40px; width: auto; height: auto; object-fit: contain; flex-shrink: 0; display: block; }
+.brand-logo-img-solo { max-width: 168px; max-height: 44px; }
 .brand-word { display: flex; flex-direction: column; line-height: 1.25; }
 .brand-word strong { font-family: 'Fraunces', serif; font-size: 15px; letter-spacing: 0.02em; }
 .brand-word span { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
