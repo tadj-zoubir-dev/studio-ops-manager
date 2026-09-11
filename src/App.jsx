@@ -1384,6 +1384,7 @@ function Sidebar({ view, setView, counts, onOpenPortal, onOpenSettings, onSignOu
             <span>Add your logo</span>
           </button>
         )}
+        <span className="sidebar-date">{fmtDate(todayISO())}</span>
       </div>
       <nav className="nav">
         {NAV_ITEMS.map(({ key, label, icon: Icon }) => (
@@ -4232,10 +4233,7 @@ export default function StudioOpsERP() {
               </button>
               <div>
                 {view === "dashboard" ? (
-                  <>
-                    <h1>Welcome, {greetingName} <span className="wave-emoji">👋</span></h1>
-                    <p>Here's what's happening in your studio.</p>
-                  </>
+                  <h1>Welcome, {greetingName} <span className="wave-emoji">👋</span></h1>
                 ) : (
                   <>
                     <h1>{VIEW_TITLES[view].title}</h1>
@@ -4273,7 +4271,6 @@ export default function StudioOpsERP() {
                   />
                 )}
               </div>
-              <span className="topbar-date">{fmtDate(todayISO())}</span>
             </div>
           </header>
 
@@ -4414,7 +4411,8 @@ const CSS = `
   border-radius: 24px; overflow-y: auto; overflow-x: hidden;
   box-shadow: 0 1px 2px rgba(20,20,25,0.05);
 }
-.brand { display: flex; align-items: center; gap: 10px; padding: 0 6px 22px; border-bottom: 1px solid var(--rule); margin-bottom: 18px; }
+.brand { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 0 6px 18px; border-bottom: 1px solid var(--rule); margin-bottom: 18px; }
+.sidebar-date { font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: var(--muted); padding: 0 2px; }
 .brand-add-logo {
   display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 12px;
   border: 1.5px dashed var(--rule); border-radius: 12px; background: transparent; color: var(--muted);
@@ -4446,10 +4444,10 @@ const CSS = `
 /* main */
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; height: calc(100vh - 20px); overflow: hidden; background: var(--paper-raised); border-radius: 24px; box-shadow: 0 1px 2px rgba(20,20,25,0.05); }
 .topbar {
-  display: flex; align-items: flex-end; justify-content: space-between;
+  display: flex; align-items: center; justify-content: space-between;
   padding: 26px 34px 18px; border-bottom: 1px solid var(--rule); flex-shrink: 0;
 }
-.topbar-left { display: flex; align-items: flex-end; gap: 12px; }
+.topbar-left { display: flex; align-items: center; gap: 12px; }
 .hamburger-btn {
   display: none; align-items: center; justify-content: center; width: 34px; height: 34px;
   border-radius: 6px; border: 1px solid var(--rule); background: var(--paper-raised); color: var(--ink);
@@ -4458,7 +4456,6 @@ const CSS = `
 .hamburger-btn:hover { background: var(--paper-dim); }
 .topbar h1 { font-size: 25px; }
 .topbar p { margin: 4px 0 0; color: var(--muted); font-size: 12.5px; }
-.topbar-date { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--muted); }
 .topbar-right { display: flex; align-items: center; gap: 14px; }
 .search-trigger {
   display: flex; align-items: center; gap: 7px; background: var(--paper-raised); border: 1.5px solid var(--rule);
@@ -4938,10 +4935,12 @@ const CSS = `
   .search-box { max-width: none; }
 
   /* topbar + page padding */
-  .topbar { padding: 16px 16px 14px; flex-wrap: wrap; row-gap: 10px; }
-  .topbar h1 { font-size: 19px; }
+  .topbar { padding: 14px 16px 12px; flex-wrap: nowrap; align-items: center; }
+  .topbar-left { gap: 8px; min-width: 0; }
+  .topbar-left > div { min-width: 0; }
+  .topbar h1 { font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .topbar p { font-size: 12px; }
-  .topbar-right { width: 100%; justify-content: space-between; }
+  .topbar-right { flex-shrink: 0; gap: 8px; }
   .main-scroll { padding: 18px 16px 44px; }
   .conn-warning, .trial-banner { padding: 8px 16px; }
   .view { gap: 16px; }
