@@ -1171,7 +1171,7 @@ function GlobalSearchModal({ data, onClose, onNavigate }) {
 // `dismissed` is an array of notification ids the user has already
 // cleared — they're filtered out until the underlying date changes
 // (which produces a different id-less state, so nothing reappears).
-function buildNotifications(data, withinDays = 3, dismissed = []) {
+function buildNotifications(data, withinDays = 3, dismissed = [], trial = null) {
   if (!data) return [];
   const today = new Date(new Date().toDateString());
   const horizon = new Date(today);
@@ -1191,6 +1191,30 @@ function buildNotifications(data, withinDays = 3, dismissed = []) {
   };
 
   const items = [];
+
+  // Trial countdown — id encodes the day count (and the locked state) so
+  // dismissing today's reminder doesn't hide tomorrow's, and the switch
+  // to read-only always surfaces as a fresh, undismissed notice.
+  if (trial && trial.active) {
+    const trialId = `trial-${trial.readOnly ? "locked" : trial.daysLeft}`;
+    if (!dismissedSet.has(trialId)) {
+      items.push({
+        id: trialId,
+        kind: "trial",
+        severity: trial.readOnly || trial.daysLeft <= 1 ? "urgent" : "soon",
+        icon: trial.readOnly ? Lock : Clock,
+        title: trial.readOnly ? "Trial has ended" : "Free trial",
+        subtitle: "Studio Ops",
+        date: "0000-00-00", // always sort to the top of its severity group
+        message: trial.readOnly
+          ? "Your 7-day trial has ended — the workspace is now read-only. Upgrade to keep adding and editing."
+          : trial.daysLeft === 0
+          ? "Your trial ends today. It'll switch to read-only after that."
+          : `Your trial ends in ${trial.daysLeft} day${trial.daysLeft === 1 ? "" : "s"}. It'll switch to read-only once it ends.`,
+        view: "__settings__",
+      });
+    }
+  }
 
   data.tasks.forEach((t) => {
     if (t.status === "done" || !t.dueDate) return;
@@ -4087,8 +4111,8 @@ export default function StudioOpsERP() {
   }, [notifOpen]);
 
   const notifications = useMemo(
-    () => buildNotifications(data, 3, data?.dismissedNotifications || []),
-    [data]
+    () => buildNotifications(data, 3, data?.dismissedNotifications || [], trial),
+    [data, trial]
   );
 
   const dismissNotification = (id) => {
@@ -4242,7 +4266,7 @@ export default function StudioOpsERP() {
                 {notifOpen && (
                   <NotificationsPanel
                     notifications={notifications}
-                    onNavigate={(v) => setView(v)}
+                    onNavigate={(v) => (v === "__settings__" ? setSettingsOpen(true) : setView(v))}
                     onDismiss={dismissNotification}
                     onClearAll={clearAllNotifications}
                     onClose={() => setNotifOpen(false)}
