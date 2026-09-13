@@ -53,6 +53,10 @@ import {
   UserPlus,
   LogIn,
   UserCog,
+  Bot,
+  Send,
+  ExternalLink,
+  Key,
 } from "lucide-react";
 import { supabase, FILES_BUCKET } from "./supabaseClient.js";
 import { jsPDF } from "jspdf";
@@ -103,6 +107,7 @@ const DEFAULT_SETTINGS = {
   invoiceNote: "Thank you for the opportunity — payment is due by the date above.",
   primaryColor: "#16294D",
   accentColor: "#D64550",
+  anthropicApiKey: "",
 };
 
 const emptyData = () => ({
@@ -932,6 +937,25 @@ function StudioSettingsModal({ settings, onSave, onClose }) {
         <Field label="Default invoice note">
           <textarea rows={2} value={form.invoiceNote} onChange={set("invoiceNote")} />
         </Field>
+
+        <h4 className="settings-section-title settings-section-title-spaced">AI Assistant</h4>
+        <p className="field-hint">
+          Powers the "AI Assistant" section in the sidebar. Needs your own Anthropic API key — get one at{" "}
+          <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer">console.anthropic.com <ExternalLink size={11} style={{ verticalAlign: "-1px" }} /></a>{" "}
+          (sign up, add billing, then "Create key"). Usage is billed to your own Anthropic account.
+        </p>
+        <Field label="Anthropic API key">
+          <input
+            type="password"
+            autoComplete="off"
+            value={form.anthropicApiKey || ""}
+            onChange={set("anthropicApiKey")}
+            placeholder="sk-ant-…"
+          />
+        </Field>
+        <p className="field-hint field-hint-error">
+          This key is sent straight from your browser to Anthropic — it's stored with your other studio settings, not on a separate server. Don't share this workspace with anyone you wouldn't trust with the key.
+        </p>
         </fieldset>
         <div className="form-actions">
           <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
@@ -1370,6 +1394,7 @@ const NAV_ITEMS = [
   { key: "invoices", label: "Invoices", icon: Receipt },
   { key: "finance", label: "Finance", icon: Wallet },
   { key: "analytics", label: "Analyse", icon: BarChart3 },
+  { key: "assistant", label: "AI Assistant", icon: Bot },
 ];
 
 function Sidebar({ view, setView, counts, onOpenPortal, onOpenSettings, onSignOut, navOpen, settings = DEFAULT_SETTINGS }) {
@@ -3865,6 +3890,471 @@ function AnalyticsView({ data }) {
   );
 }
 
+/* ---------------------- AI assistant ----------------------
+   Talks straight to the Anthropic API from the browser using the user's
+   own key (Settings → AI Assistant). It can answer questions about the
+   studio's data and, when asked to change something, proposes an action
+   via tool use — nothing is written until the user approves the card. */
+const AI_MODEL = "claude-sonnet-5";
+
+const AI_TOOLS = [
+  {
+    name: "add_client",
+    description: "Add a new client to the studio.",
+    input_schema: {
+      type: "object",
+      properties: {
+        name: { type: "string" }, company: { type: "string" },
+        email: { type: "string" }, phone: { type: "string" }, notes: { type: "string" },
+      },
+      required: ["name", "company"],
+    },
+  },
+  { name: "delete_client", description: "Remove a client by id. Also detaches their projects/invoices, it does not delete those.", input_schema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
+  {
+    name: "add_project",
+    description: "Add a new project for an existing client.",
+    input_schema: {
+      type: "object",
+      properties: {
+        clientId: { type: "string" }, name: { type: "string" },
+        status: { type: "string", enum: ["planning", "active", "review", "completed"] },
+        budget: { type: "number" }, deadline: { type: "string", description: "YYYY-MM-DD" },
+        description: { type: "string" },
+      },
+      required: ["clientId", "name"],
+    },
+  },
+  {
+    name: "update_project",
+    description: "Change a project's status and/or deadline.",
+    input_schema: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        status: { type: "string", enum: ["planning", "active", "review", "completed"] },
+        deadline: { type: "string", description: "YYYY-MM-DD" },
+      },
+      required: ["id"],
+    },
+  },
+  { name: "delete_project", description: "Delete a project by id (also deletes its tasks and expenses).", input_schema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
+  {
+    name: "add_task",
+    description: "Add a task to a project.",
+    input_schema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string" }, title: { type: "string" }, assignee: { type: "string" },
+        priority: { type: "string", enum: ["low", "medium", "high"] },
+        dueDate: { type: "string", description: "YYYY-MM-DD" },
+      },
+      required: ["projectId", "title"],
+    },
+  },
+  {
+    name: "update_task",
+    description: "Change a task's status, assignee, or due date — e.g. marking it done.",
+    input_schema: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        status: { type: "string", enum: ["todo", "in-progress", "review", "done"] },
+        assignee: { type: "string" }, dueDate: { type: "string", description: "YYYY-MM-DD" },
+      },
+      required: ["id"],
+    },
+  },
+  { name: "delete_task", description: "Delete a task by id.", input_schema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
+  {
+    name: "add_invoice",
+    description: "Create an invoice for a client, optionally linked to a project.",
+    input_schema: {
+      type: "object",
+      properties: {
+        clientId: { type: "string" }, projectId: { type: "string" },
+        dueDate: { type: "string", description: "YYYY-MM-DD" },
+        items: {
+          type: "array",
+          items: { type: "object", properties: { description: { type: "string" }, qty: { type: "number" }, rate: { type: "number" } }, required: ["description", "qty", "rate"] },
+        },
+      },
+      required: ["clientId", "items"],
+    },
+  },
+  {
+    name: "update_invoice_status",
+    description: "Change an invoice's status, e.g. mark it paid or sent.",
+    input_schema: { type: "object", properties: { id: { type: "string" }, status: { type: "string", enum: ["draft", "sent", "paid"] } }, required: ["id", "status"] },
+  },
+  { name: "delete_invoice", description: "Delete an invoice by id.", input_schema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
+  {
+    name: "add_expense",
+    description: "Log an expense. Leave projectId empty for general studio overhead.",
+    input_schema: {
+      type: "object",
+      properties: {
+        description: { type: "string" }, amount: { type: "number" }, date: { type: "string", description: "YYYY-MM-DD" },
+        category: { type: "string" }, projectId: { type: "string" },
+      },
+      required: ["description", "amount"],
+    },
+  },
+  { name: "delete_expense", description: "Delete an expense by id.", input_schema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
+  {
+    name: "add_employee",
+    description: "Add a team member.",
+    input_schema: {
+      type: "object",
+      properties: { name: { type: "string" }, role: { type: "string" }, email: { type: "string" }, phone: { type: "string" }, dailyRate: { type: "number" } },
+      required: ["name"],
+    },
+  },
+  { name: "delete_employee", description: "Remove a team member by id.", input_schema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
+];
+
+function buildAiSystemPrompt(data) {
+  const snapshot = {
+    clients: data.clients.map((c) => ({ id: c.id, name: c.name, company: c.company })),
+    projects: data.projects.map((p) => ({ id: p.id, name: p.name, clientId: p.clientId, status: p.status, budget: p.budget, deadline: p.deadline })),
+    tasks: data.tasks.map((t) => ({ id: t.id, title: t.title, projectId: t.projectId, status: t.status, assignee: t.assignee, dueDate: t.dueDate, priority: t.priority })),
+    invoices: data.invoices.map((i) => ({ id: i.id, number: i.number, clientId: i.clientId, projectId: i.projectId, status: i.status, dueDate: i.dueDate, total: i.items.reduce((s, it) => s + it.qty * it.rate, 0) })),
+    expenses: data.expenses.map((e) => ({ id: e.id, description: e.description, amount: e.amount, date: e.date, category: e.category, projectId: e.projectId })),
+    employees: data.employees.map((e) => ({ id: e.id, name: e.name, role: e.role, dailyRate: e.dailyRate })),
+  };
+  return `You are the AI assistant embedded in "Studio Ops Manager", a small creative studio's ops dashboard. Today is ${todayISO()}.
+Answer questions about the studio using the data snapshot below. Be concise and use real numbers/names from it — don't invent data that isn't there.
+When the person asks you to add, change, or delete something, call the matching tool instead of just describing it — the app will show them a confirmation card before anything is actually saved, so you don't need to ask permission yourself, just propose the action.
+Only call a tool when the person's latest message actually asks for a change. Reference existing records by their id from the snapshot (never invent an id). If you can't find something they mentioned, say so instead of guessing an id.
+
+Current data snapshot (JSON):
+${JSON.stringify(snapshot)}`;
+}
+
+// Human-readable one-liner for a proposed tool call, shown on its confirmation card.
+function describeAiAction(name, input, data) {
+  const client = (id) => data.clients.find((c) => c.id === id)?.company || "an unknown client";
+  const project = (id) => data.projects.find((p) => p.id === id)?.name || "an unknown project";
+  switch (name) {
+    case "add_client": return `Add client "${input.company}" (contact: ${input.name})`;
+    case "delete_client": return `Delete client "${data.clients.find((c) => c.id === input.id)?.company || input.id}"`;
+    case "add_project": return `Add project "${input.name}" for ${client(input.clientId)}`;
+    case "update_project": return `Update project "${project(input.id)}"${input.status ? ` → status: ${input.status}` : ""}${input.deadline ? `, deadline: ${input.deadline}` : ""}`;
+    case "delete_project": return `Delete project "${project(input.id)}" (and its tasks/expenses)`;
+    case "add_task": return `Add task "${input.title}" to "${project(input.projectId)}"`;
+    case "update_task": return `Update task "${data.tasks.find((t) => t.id === input.id)?.title || input.id}"${input.status ? ` → status: ${input.status}` : ""}`;
+    case "delete_task": return `Delete task "${data.tasks.find((t) => t.id === input.id)?.title || input.id}"`;
+    case "add_invoice": return `Create invoice for ${client(input.clientId)} — ${(input.items || []).length} line item(s)`;
+    case "update_invoice_status": return `Mark invoice #${data.invoices.find((i) => i.id === input.id)?.number || input.id} as ${input.status}`;
+    case "delete_invoice": return `Delete invoice #${data.invoices.find((i) => i.id === input.id)?.number || input.id}`;
+    case "add_expense": return `Log expense "${input.description}" — ${fmtMoney(input.amount)}`;
+    case "delete_expense": return `Delete expense "${data.expenses.find((e) => e.id === input.id)?.description || input.id}"`;
+    case "add_employee": return `Add team member "${input.name}"${input.role ? ` (${input.role})` : ""}`;
+    case "delete_employee": return `Remove team member "${data.employees.find((e) => e.id === input.id)?.name || input.id}"`;
+    default: return name;
+  }
+}
+
+// Executes an approved action against `data` and returns the new data plus
+// a short result string fed back to the assistant as the tool result.
+function executeAiAction(name, input, data) {
+  const notFound = (label) => { throw new Error(`${label} not found — nothing changed.`); };
+  switch (name) {
+    case "add_client": {
+      const c = { id: uid("cli"), name: input.name, company: input.company, email: input.email || "", phone: input.phone || "", notes: input.notes || "", createdAt: todayISO() };
+      return { data: { ...data, clients: [...data.clients, c] }, result: `Added client ${c.company}.` };
+    }
+    case "delete_client": {
+      if (!data.clients.some((c) => c.id === input.id)) notFound("Client");
+      return { data: { ...data, clients: data.clients.filter((c) => c.id !== input.id) }, result: "Client deleted." };
+    }
+    case "add_project": {
+      if (!data.clients.some((c) => c.id === input.clientId)) notFound("Client");
+      const p = { id: uid("prj"), clientId: input.clientId, name: input.name, status: input.status || "planning", budget: Number(input.budget) || 0, deadline: input.deadline || "", description: input.description || "", portalCode: generatePortalCode(data.clients.find((c) => c.id === input.clientId)?.company), teamIds: [] };
+      return { data: { ...data, projects: [...data.projects, p] }, result: `Added project "${p.name}".` };
+    }
+    case "update_project": {
+      if (!data.projects.some((p) => p.id === input.id)) notFound("Project");
+      return {
+        data: { ...data, projects: data.projects.map((p) => (p.id === input.id ? { ...p, ...(input.status ? { status: input.status } : {}), ...(input.deadline ? { deadline: input.deadline } : {}) } : p)) },
+        result: "Project updated.",
+      };
+    }
+    case "delete_project": {
+      if (!data.projects.some((p) => p.id === input.id)) notFound("Project");
+      return {
+        data: {
+          ...data,
+          projects: data.projects.filter((p) => p.id !== input.id),
+          tasks: data.tasks.filter((t) => t.projectId !== input.id),
+          expenses: data.expenses.filter((e) => e.projectId !== input.id),
+        },
+        result: "Project (and its tasks/expenses) deleted.",
+      };
+    }
+    case "add_task": {
+      if (!data.projects.some((p) => p.id === input.projectId)) notFound("Project");
+      const t = { id: uid("tsk"), projectId: input.projectId, title: input.title, assignee: input.assignee || "", status: "todo", priority: input.priority || "medium", dueDate: input.dueDate || "" };
+      return { data: { ...data, tasks: [...data.tasks, t] }, result: `Added task "${t.title}".` };
+    }
+    case "update_task": {
+      if (!data.tasks.some((t) => t.id === input.id)) notFound("Task");
+      return {
+        data: { ...data, tasks: data.tasks.map((t) => (t.id === input.id ? { ...t, ...(input.status ? { status: input.status } : {}), ...(input.assignee !== undefined ? { assignee: input.assignee } : {}), ...(input.dueDate ? { dueDate: input.dueDate } : {}) } : t)) },
+        result: "Task updated.",
+      };
+    }
+    case "delete_task": {
+      if (!data.tasks.some((t) => t.id === input.id)) notFound("Task");
+      return { data: { ...data, tasks: data.tasks.filter((t) => t.id !== input.id) }, result: "Task deleted." };
+    }
+    case "add_invoice": {
+      if (!data.clients.some((c) => c.id === input.clientId)) notFound("Client");
+      const nextNumber = (data.invoices.reduce((max, i) => Math.max(max, Number(i.number) || 0), 0) || 1000) + 1;
+      const inv = {
+        id: uid("inv"), number: nextNumber, clientId: input.clientId, projectId: input.projectId || "",
+        status: "draft", issueDate: todayISO(), dueDate: input.dueDate || addDays(todayISO(), 15),
+        items: (input.items || []).map((it) => ({ description: it.description, qty: Number(it.qty) || 1, rate: Number(it.rate) || 0 })),
+      };
+      return { data: { ...data, invoices: [...data.invoices, inv] }, result: `Created invoice #${inv.number}.` };
+    }
+    case "update_invoice_status": {
+      if (!data.invoices.some((i) => i.id === input.id)) notFound("Invoice");
+      return { data: { ...data, invoices: data.invoices.map((i) => (i.id === input.id ? { ...i, status: input.status } : i)) }, result: "Invoice updated." };
+    }
+    case "delete_invoice": {
+      if (!data.invoices.some((i) => i.id === input.id)) notFound("Invoice");
+      return { data: { ...data, invoices: data.invoices.filter((i) => i.id !== input.id) }, result: "Invoice deleted." };
+    }
+    case "add_expense": {
+      const e = { id: uid("exp"), description: input.description, amount: Number(input.amount) || 0, date: input.date || todayISO(), category: input.category || "", projectId: input.projectId || null };
+      return { data: { ...data, expenses: [...data.expenses, e] }, result: `Logged expense "${e.description}".` };
+    }
+    case "delete_expense": {
+      if (!data.expenses.some((e) => e.id === input.id)) notFound("Expense");
+      return { data: { ...data, expenses: data.expenses.filter((e) => e.id !== input.id) }, result: "Expense deleted." };
+    }
+    case "add_employee": {
+      const e = { id: uid("emp"), name: input.name, role: input.role || "", email: input.email || "", phone: input.phone || "", dailyRate: Number(input.dailyRate) || 0, notes: "", createdAt: todayISO() };
+      return { data: { ...data, employees: [...data.employees, e] }, result: `Added team member ${e.name}.` };
+    }
+    case "delete_employee": {
+      if (!data.employees.some((e) => e.id === input.id)) notFound("Employee");
+      return {
+        data: { ...data, employees: data.employees.filter((e) => e.id !== input.id), projects: data.projects.map((p) => ({ ...p, teamIds: (p.teamIds || []).filter((tid) => tid !== input.id) })) },
+        result: "Team member removed.",
+      };
+    }
+    default:
+      throw new Error("Unknown action.");
+  }
+}
+
+function AiChatBubble({ msg }) {
+  if (msg.role === "user") {
+    return <div className="ai-msg ai-msg-user">{msg.text}</div>;
+  }
+  if (msg.role === "error") {
+    return <div className="ai-msg ai-msg-error"><AlertTriangle size={13} /> {msg.text}</div>;
+  }
+  return <div className="ai-msg ai-msg-assistant">{msg.text}</div>;
+}
+
+function AiActionCard({ action, data, onResolve }) {
+  const [state, setState] = useState("pending"); // pending | approved | rejected | error
+  const [error, setError] = useState("");
+  const { readOnly } = useTrial();
+
+  const approve = () => {
+    if (readOnly) return;
+    try {
+      const { data: newData, result } = executeAiAction(action.name, action.input, data);
+      setState("approved");
+      onResolve({ ok: true, newData, result });
+    } catch (err) {
+      setState("error");
+      setError(err.message);
+      onResolve({ ok: false, result: err.message });
+    }
+  };
+  const reject = () => {
+    setState("rejected");
+    onResolve({ ok: false, result: "The user declined this action." });
+  };
+
+  return (
+    <div className={`ai-action-card ai-action-card-${state}`}>
+      <div className="ai-action-card-icon"><Sparkles size={13} /></div>
+      <div className="ai-action-card-body">
+        <p>{describeAiAction(action.name, action.input, data)}</p>
+        {state === "pending" && !readOnly && (
+          <div className="ai-action-card-actions">
+            <button className="btn btn-primary btn-sm" onClick={approve}>Approve</button>
+            <button className="btn btn-ghost btn-sm" onClick={reject}>Decline</button>
+          </div>
+        )}
+        {state === "pending" && readOnly && (
+          <p className="field-hint field-hint-error"><Lock size={12} /> Read-only — your trial has ended.</p>
+        )}
+        {state === "approved" && <p className="ai-action-card-status ai-action-card-status-ok"><CheckCircle2 size={13} /> Done</p>}
+        {state === "rejected" && <p className="ai-action-card-status">Declined</p>}
+        {state === "error" && <p className="ai-action-card-status ai-action-card-status-error"><AlertTriangle size={13} /> {error}</p>}
+      </div>
+    </div>
+  );
+}
+
+function AIAssistantView({ data, mutate, settings }) {
+  const [messages, setMessages] = useState([
+    { role: "assistant", text: "Hi! Ask me anything about your studio — overdue invoices, who's overworked, revenue this month — or tell me to add/update/delete something and I'll propose it for your approval." },
+  ]);
+  const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [rawHistory, setRawHistory] = useState([]); // Anthropic-format messages, kept in parallel for context
+  const scrollRef = useRef(null);
+  const apiKey = settings?.anthropicApiKey || "";
+
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [messages]);
+
+  const callClaude = async (history) => {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+      },
+      body: JSON.stringify({
+        model: AI_MODEL,
+        max_tokens: 1024,
+        system: buildAiSystemPrompt(data),
+        tools: AI_TOOLS,
+        messages: history,
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      if (res.status === 401) throw new Error("That API key was rejected. Double-check it in Studio settings → AI Assistant.");
+      throw new Error(`Anthropic API error (${res.status}). ${body.slice(0, 200)}`);
+    }
+    return res.json();
+  };
+
+  const send = async () => {
+    const text = input.trim();
+    if (!text || busy) return;
+    if (!apiKey) return;
+    setInput("");
+    setMessages((m) => [...m, { role: "user", text }]);
+    const nextHistory = [...rawHistory, { role: "user", content: text }];
+    setBusy(true);
+    try {
+      const resp = await callClaude(nextHistory);
+      const textBlocks = resp.content.filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
+      const toolBlocks = resp.content.filter((b) => b.type === "tool_use");
+      setRawHistory([...nextHistory, { role: "assistant", content: resp.content }]);
+      if (textBlocks) setMessages((m) => [...m, { role: "assistant", text: textBlocks }]);
+      if (toolBlocks.length > 0) {
+        setMessages((m) => [...m, { role: "actions", actions: toolBlocks.map((b) => ({ id: b.id, name: b.name, input: b.input })), resolved: {} }]);
+      }
+    } catch (err) {
+      setMessages((m) => [...m, { role: "error", text: err.message || "Something went wrong talking to Anthropic." }]);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Called once per approved/declined action; when every action in a turn
+  // is resolved, sends the tool_results back so the assistant can confirm.
+  const resolveAction = (msgIndex, actionId, outcome) => {
+    if (outcome.ok) mutate(outcome.newData);
+    setMessages((m) => {
+      const next = [...m];
+      const entry = next[msgIndex];
+      const resolved = { ...entry.resolved, [actionId]: outcome };
+      next[msgIndex] = { ...entry, resolved };
+      const allDone = entry.actions.every((a) => resolved[a.id]);
+      if (allDone) {
+        const toolResultMsg = {
+          role: "user",
+          content: entry.actions.map((a) => ({
+            type: "tool_result",
+            tool_use_id: a.id,
+            content: resolved[a.id].result,
+          })),
+        };
+        setBusy(true);
+        setRawHistory((h) => {
+          const updatedHistory = [...h, toolResultMsg];
+          callClaude(updatedHistory)
+            .then((resp) => {
+              const textBlocks = resp.content.filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
+              setRawHistory((h2) => [...h2, { role: "assistant", content: resp.content }]);
+              if (textBlocks) setMessages((mm) => [...mm, { role: "assistant", text: textBlocks }]);
+            })
+            .catch((err) => setMessages((mm) => [...mm, { role: "error", text: err.message }]))
+            .finally(() => setBusy(false));
+          return updatedHistory;
+        });
+      }
+      return next;
+    });
+  };
+
+  if (!apiKey) {
+    return (
+      <div className="view">
+        <div className="ai-setup-card">
+          <div className="ai-setup-icon"><Key size={20} /></div>
+          <h3>Connect your Anthropic API key to turn this on</h3>
+          <ol className="ai-setup-steps">
+            <li>Go to <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer">console.anthropic.com/settings/keys <ExternalLink size={11} style={{ verticalAlign: "-1px" }} /></a> and sign up if you haven't.</li>
+            <li>Add a billing method — API usage is billed separately from any Claude.ai subscription, usually a few cents per conversation here.</li>
+            <li>Click "Create Key", copy it, and paste it into <strong>Studio settings → AI Assistant</strong>.</li>
+          </ol>
+          <p className="field-hint">The key is stored with your other studio settings and used only to call Anthropic directly from your browser — nothing runs on a separate server.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="view ai-view">
+      <div className="ai-chat-window" ref={scrollRef}>
+        {messages.map((m, i) => {
+          if (m.role === "actions") {
+            return (
+              <div className="ai-actions-group" key={i}>
+                {m.actions.map((a) => (
+                  <AiActionCard key={a.id} action={a} data={data} onResolve={(outcome) => resolveAction(i, a.id, outcome)} />
+                ))}
+              </div>
+            );
+          }
+          return <AiChatBubble key={i} msg={m} />;
+        })}
+        {busy && <div className="ai-msg ai-msg-assistant ai-msg-typing"><Loader2 size={13} className="spin" /> Thinking…</div>}
+      </div>
+      <div className="ai-input-row">
+        <input
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && send()}
+          placeholder="Ask about your studio, or tell me what to change…"
+          disabled={busy}
+        />
+        <button className="btn btn-primary ai-send-btn" onClick={send} disabled={busy || !input.trim()}>
+          <Send size={14} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+
 /* ---------------------- client portal ----------------------
    A code-gated, read-only view. The code is per-project (see
    Projects → Files/portal chip), not a real authentication
@@ -4030,6 +4520,7 @@ const VIEW_TITLES = {
   invoices: { title: "Invoices", sub: "Billing and collections" },
   finance: { title: "Finance", sub: "Income, expenses, and profit" },
   analytics: { title: "Analyse", sub: "Performance across the studio" },
+  assistant: { title: "AI Assistant", sub: "Ask questions or hand off changes" },
 };
 
 export default function StudioOpsERP() {
@@ -4164,9 +4655,11 @@ export default function StudioOpsERP() {
     return (
       <div className="studio-ops">
         <style>{CSS}</style>
-        <div className="boot-screen">
-          <div className="boot-stamp">SO</div>
-          <p>Opening the job log…</p>
+        <div className="boot-card">
+          <div className="boot-screen">
+            <div className="boot-spinner" />
+            <p>Opening the job log<span className="boot-dots"><span>.</span><span>.</span><span>.</span></span></p>
+          </div>
         </div>
       </div>
     );
@@ -4185,9 +4678,11 @@ export default function StudioOpsERP() {
     return (
       <div className="studio-ops">
         <style>{CSS}</style>
-        <div className="boot-screen">
-          <div className="boot-stamp">SO</div>
-          <p>Opening the job log…</p>
+        <div className="boot-card">
+          <div className="boot-screen">
+            <div className="boot-spinner" />
+            <p>Opening the job log<span className="boot-dots"><span>.</span><span>.</span><span>.</span></span></p>
+          </div>
         </div>
       </div>
     );
@@ -4306,6 +4801,7 @@ export default function StudioOpsERP() {
               {view === "invoices" && <InvoicesView data={data} mutate={mutate} />}
               {view === "finance" && <FinanceView data={data} mutate={mutate} />}
               {view === "analytics" && <AnalyticsView data={data} />}
+              {view === "assistant" && <AIAssistantView data={data} mutate={mutate} settings={data.settings || DEFAULT_SETTINGS} />}
             </div>
           </div>
         </main>
@@ -4392,16 +4888,25 @@ const CSS = `
 .studio-ops :focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 
 /* boot */
+.boot-card {
+  flex: 1; width: 100%; height: calc(100vh - 20px); border-radius: 24px;
+  background: var(--paper-raised); box-shadow: 0 1px 2px rgba(20,20,25,0.05);
+  display: flex; align-items: center; justify-content: center;
+}
 .boot-screen {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  width: 100%; gap: 12px; color: var(--muted);
+  width: 100%; gap: 18px; color: var(--muted);
 }
-.boot-stamp {
-  width: 52px; height: 52px; border: 2.5px solid var(--red); border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
-  font-family: 'Fraunces', serif; font-weight: 700; color: var(--red);
-  transform: rotate(-8deg);
+.boot-spinner {
+  width: 44px; height: 44px; border-radius: 50%; flex-shrink: 0;
+  border: 3px solid var(--rule); border-top-color: var(--red); border-right-color: var(--red);
+  animation: boot-spin 0.85s cubic-bezier(0.5, 0.1, 0.5, 0.9) infinite;
 }
+.boot-dots span { display: inline-block; opacity: 0; animation: boot-dot 1.4s ease-in-out infinite; }
+.boot-dots span:nth-child(2) { animation-delay: 0.25s; }
+.boot-dots span:nth-child(3) { animation-delay: 0.5s; }
+@keyframes boot-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@keyframes boot-dot { 0%, 100% { opacity: 0; } 50% { opacity: 1; } }
 
 /* sidebar */
 .sidebar {
@@ -5135,6 +5640,52 @@ const CSS = `
 /* analytics — team performance */
 .team-perf-list { display: flex; flex-direction: column; gap: 14px; }
 .team-perf-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 5px; font-size: 13px; }
+
+/* AI assistant */
+.ai-setup-card {
+  max-width: 520px; margin: 24px auto; padding: 26px 28px; background: var(--paper-raised);
+  border: 1.5px solid var(--rule); border-radius: 16px; text-align: left;
+}
+.ai-setup-icon {
+  width: 40px; height: 40px; border-radius: 50%; background: var(--paper-dim); color: var(--ink);
+  display: flex; align-items: center; justify-content: center; margin-bottom: 14px;
+}
+.ai-setup-card h3 { margin: 0 0 14px; font-size: 17px; }
+.ai-setup-steps { margin: 0 0 14px; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.ai-setup-steps a { color: var(--blue); font-weight: 600; }
+.ai-view { display: flex; flex-direction: column; height: calc(100vh - 220px); min-height: 420px; }
+.ai-chat-window {
+  flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px;
+  padding: 6px 4px 16px; margin-bottom: 8px;
+}
+.ai-msg { max-width: 78%; padding: 9px 13px; border-radius: 14px; font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
+.ai-msg-user { align-self: flex-end; background: var(--ink); color: #fff; border-bottom-right-radius: 4px; }
+.ai-msg-assistant { align-self: flex-start; background: var(--paper-dim); color: var(--ink); border-bottom-left-radius: 4px; }
+.ai-msg-error { align-self: flex-start; background: #FCEEEF; color: var(--red); display: flex; align-items: center; gap: 6px; }
+.ai-msg-typing { display: flex; align-items: center; gap: 7px; color: var(--muted); }
+.ai-actions-group { align-self: stretch; display: flex; flex-direction: column; gap: 8px; }
+.ai-action-card {
+  display: flex; gap: 10px; padding: 12px; border: 1.5px solid var(--rule); border-radius: 12px;
+  background: var(--paper-raised); max-width: 82%;
+}
+.ai-action-card-icon {
+  flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%; background: #EDE9FE; color: #5541C9;
+  display: flex; align-items: center; justify-content: center;
+}
+.ai-action-card-body p { margin: 0 0 8px; font-size: 13px; font-weight: 600; }
+.ai-action-card-actions { display: flex; gap: 8px; }
+.ai-action-card-status { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); margin: 0; }
+.ai-action-card-status-ok { color: var(--green); }
+.ai-action-card-status-error { color: var(--red); }
+.ai-action-card-approved { border-color: var(--green); }
+.ai-action-card-rejected { opacity: 0.6; }
+.ai-action-card-error { border-color: var(--red); }
+.ai-input-row { display: flex; gap: 8px; flex-shrink: 0; }
+.ai-input-row input {
+  flex: 1; padding: 11px 14px; border: 1.5px solid var(--rule); border-radius: 999px; font-size: 13px; background: var(--paper-raised);
+}
+.ai-input-row input:focus { outline: none; border-color: var(--ink); }
+.ai-send-btn { width: 42px; height: 42px; border-radius: 50%; padding: 0; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 
 /* time view */
 .week-nav { display: flex; align-items: center; gap: 8px; }
